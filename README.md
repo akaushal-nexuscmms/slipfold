@@ -1,13 +1,13 @@
-# T1 Field Guide
+# Slipfold
 
-Every line of your Canadian T1 computed and explained, so you can fill in your return
+Your slips, folded into a return. Every line of your Canadian T1 computed and explained, so you can fill in your return
 accurately — in any CRA-certified software or on the paper form. Save the fields that
 recur (you, your employers, your carry-forwards) and start next year from this one.
 
 **It does not file.** It gives you the values, tells you which slip box each came from and
 why the line is what it is, and hands you the balances to carry forward. You type them in.
 
-**Live:** https://akaushal-nexuscmms.github.io/t1-fieldguide/ — installable as a PWA, works offline.
+**Live:** https://akaushal-nexuscmms.github.io/slipfold/ — installable as a PWA, works offline.
 
 Everything runs on your device. No account, no upload, no server. Returns are stored in
 your browser (IndexedDB); export a backup file before switching devices.

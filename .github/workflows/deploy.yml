@@ -30,7 +30,7 @@ jobs:
       - run: node scripts/smoke.ts
       - run: npm run build
         env:
-          BASE_PATH: /t1-fieldguide/
+          BASE_PATH: /slipfold/
       - uses: actions/configure-pages@v5
         if: github.event_name != 'pull_request'
       - uses: actions/upload-pages-artifact@v3

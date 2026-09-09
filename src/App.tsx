@@ -121,7 +121,7 @@ export default function App() {
       <header className="border-b border-rule bg-surface-raised">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3">
           <div>
-            <Caption tone="accent">T1 Field Guide · Canada</Caption>
+            <Caption tone="accent">Slipfold · Canada</Caption>
             <h1 className="text-xl font-semibold tracking-tight">Your {ret.year} return, every line computed and explained</h1>
           </div>
           <div className="flex items-center gap-2">
@@ -220,7 +220,7 @@ export default function App() {
           This app prepares values; it does not file. Type them into any CRA-certified software or onto the paper T1, and check the
           result against that software before you send it. Nothing you enter leaves this device. Rules: {TAX_YEAR} federal and
           provincial figures, cited in the source.{" "}
-          <a className="underline hover:text-ink" href="https://github.com/akaushal-nexuscmms/t1-fieldguide" target="_blank" rel="noreferrer">
+          <a className="underline hover:text-ink" href="https://github.com/akaushal-nexuscmms/slipfold" target="_blank" rel="noreferrer">
             Source on GitHub
           </a>
           .
@@ -611,7 +611,7 @@ function BackupTab({
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `t1-fieldguide-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `slipfold-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -749,7 +749,7 @@ function LockScreen({ onUnlock }: { onUnlock: (pass: string) => Promise<void> })
   return (
     <div className="flex min-h-screen items-center justify-center bg-paper p-4 text-ink">
       <div className="w-full max-w-sm rounded-xl border border-rule bg-surface-raised p-5 shadow-sm">
-        <Caption tone="accent">T1 Field Guide</Caption>
+        <Caption tone="accent">Slipfold</Caption>
         <h1 className="mt-1 text-lg font-semibold">Unlock your returns</h1>
         <p className="mt-1 text-sm text-ink-soft">They are encrypted on this device with your passphrase. Nothing was sent anywhere.</p>
         <input

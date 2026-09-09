@@ -105,7 +105,7 @@ with sync_playwright() as p:
         page.get_by_role("button", name=re.compile(r"Export all years")).click()
     d = dl.value; path = f"{OUT}/{d.suggested_filename}"; d.save_as(path)
     j = json.load(open(path, encoding="utf-8"))
-    check("export: JSON with both years", j.get("app") == "t1-fieldguide" and sorted(r["year"] for r in j["returns"]) == [2025, 2026], str([r["year"] for r in j["returns"]]))
+    check("export: JSON with both years", j.get("app") == "slipfold" and sorted(r["year"] for r in j["returns"]) == [2025, 2026], str([r["year"] for r in j["returns"]]))
 
     # PWA manifest + service worker registration (dev mode serves manifest; SW only in build)
     mf = page.evaluate("fetch('/manifest.webmanifest').then(r => r.status)")
@@ -122,7 +122,7 @@ with sync_playwright() as p:
     check("vault: passphrase set, rows re-encrypted", "now encrypted" in body and "passphrase — set" in body.lower())
     check("vault: header says encrypted + Lock button", "Encrypted on this device" in page.inner_text("header") and page.get_by_role("button", name="Lock").count() == 1)
     # stored rows are sealed: no plaintext issuer in IndexedDB
-    sealed = page.evaluate("""() => new Promise(res => { const r = indexedDB.open('t1-fieldguide'); r.onsuccess = () => { const db = r.result; const tx = db.transaction('returns'); const all = tx.objectStore('returns').getAll(); all.onsuccess = () => res(JSON.stringify(all.result)); }; })""")
+    sealed = page.evaluate("""() => new Promise(res => { const r = indexedDB.open('slipfold'); r.onsuccess = () => { const db = r.result; const tx = db.transaction('returns'); const all = tx.objectStore('returns').getAll(); all.onsuccess = () => res(JSON.stringify(all.result)); }; })""")
     check("vault: IndexedDB rows contain no plaintext (issuer, SIN)", "Prairie" not in sealed and '"enc":true' in sealed, sealed[:120])
     # encrypted export
     with page.expect_download(timeout=15000) as dl:
@@ -152,7 +152,7 @@ with sync_playwright() as p:
     # remove passphrase → rows plain again
     page.on("dialog", lambda dlg: dlg.accept())
     page.get_by_role("button", name="Remove passphrase").click(); page.wait_for_timeout(1500)
-    plain = page.evaluate("""() => new Promise(res => { const r = indexedDB.open('t1-fieldguide'); r.onsuccess = () => { const db = r.result; const tx = db.transaction('returns'); const all = tx.objectStore('returns').getAll(); all.onsuccess = () => res(JSON.stringify(all.result)); }; })""")
+    plain = page.evaluate("""() => new Promise(res => { const r = indexedDB.open('slipfold'); r.onsuccess = () => { const db = r.result; const tx = db.transaction('returns'); const all = tx.objectStore('returns').getAll(); all.onsuccess = () => res(JSON.stringify(all.result)); }; })""")
     check("vault: remove passphrase stores rows in the clear again", "Prairie" in plain and '"enc":true' not in plain)
 
     # dark + mobile

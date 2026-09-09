@@ -3,7 +3,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 
-// BASE_PATH is set by the GitHub Pages workflow (/t1-fieldguide/); locally the app serves from /.
+// BASE_PATH is set by the GitHub Pages workflow (/slipfold/); locally the app serves from /.
 const base = process.env.BASE_PATH ?? "/";
 
 export default defineConfig({
@@ -15,8 +15,8 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["favicon.svg"],
       manifest: {
-        name: "T1 Field Guide — Canadian tax return companion",
-        short_name: "T1 Field Guide",
+        name: "Slipfold — Canadian tax return companion",
+        short_name: "Slipfold",
         description: "Every line of your Canadian T1 computed and explained, so you can fill in your return accurately. Runs entirely on your device.",
         theme_color: "#1f5f8b",
         background_color: "#f4f5f7",

@@ -13,7 +13,7 @@ class Db extends Dexie {
   returns!: EntityTable<ReturnRow, "year">;
   settings!: EntityTable<SettingRow, "key">;
   constructor() {
-    super("t1-fieldguide");
+    super("slipfold");
     this.version(1).stores({ returns: "year", settings: "key" });
   }
 }
@@ -123,24 +123,24 @@ export function rollForward(from: TaxReturn): TaxReturn {
 // ---------- backup files ----------
 
 type ExportFile =
-  | { app: "t1-fieldguide"; version: 1; exported: string; returns: TaxReturn[] }
-  | { app: "t1-fieldguide"; version: 2; exported: string; encrypted: true; salt: string; iterations: number; payload: Sealed };
+  | { app: "slipfold" | "t1-fieldguide"; version: 1; exported: string; returns: TaxReturn[] }
+  | { app: "slipfold" | "t1-fieldguide"; version: 2; exported: string; encrypted: true; salt: string; iterations: number; payload: Sealed };
 
 /** Plain JSON when there is no passphrase; sealed with the vault's key (and its salt, so import can derive it) when there is. */
 export async function exportJson(returns: TaxReturn[], key: Key, meta: VaultMeta | null): Promise<string> {
   if (key && meta) {
     const payload = await seal(key, returns);
-    const file: ExportFile = { app: "t1-fieldguide", version: 2, exported: new Date().toISOString(), encrypted: true, salt: meta.salt, iterations: meta.iterations, payload };
+    const file: ExportFile = { app: "slipfold", version: 2, exported: new Date().toISOString(), encrypted: true, salt: meta.salt, iterations: meta.iterations, payload };
     return JSON.stringify(file, null, 2);
   }
-  const file: ExportFile = { app: "t1-fieldguide", version: 1, exported: new Date().toISOString(), returns };
+  const file: ExportFile = { app: "slipfold", version: 1, exported: new Date().toISOString(), returns };
   return JSON.stringify(file, null, 2);
 }
 
 export function isEncryptedBackup(text: string): boolean {
   try {
     const j = JSON.parse(text) as Partial<ExportFile>;
-    return j.app === "t1-fieldguide" && (j as { encrypted?: boolean }).encrypted === true;
+    return (j.app === "slipfold" || j.app === "t1-fieldguide") && (j as { encrypted?: boolean }).encrypted === true;
   } catch {
     return false;
   }
@@ -148,7 +148,7 @@ export function isEncryptedBackup(text: string): boolean {
 
 export async function parseImport(text: string, passphrase?: string): Promise<TaxReturn[]> {
   const j = JSON.parse(text) as ExportFile;
-  if (!j || j.app !== "t1-fieldguide") throw new Error("Not a T1 Field Guide backup file.");
+  if (!j || (j.app !== "slipfold" && j.app !== "t1-fieldguide")) throw new Error("Not a Slipfold backup file."); // older backups carry the working name
   if ("encrypted" in j && j.encrypted) {
     if (!passphrase) throw new Error("This backup is encrypted — enter the passphrase it was exported with.");
     const key = await deriveKey(passphrase, Uint8Array.from(atob(j.salt), (c) => c.charCodeAt(0)), j.iterations);
@@ -159,6 +159,6 @@ export async function parseImport(text: string, passphrase?: string): Promise<Ta
     }
   }
   const plain = j as Extract<ExportFile, { version: 1 }>;
-  if (!Array.isArray(plain.returns)) throw new Error("Not a T1 Field Guide backup file.");
+  if (!Array.isArray(plain.returns)) throw new Error("Not a Slipfold backup file.");
   return plain.returns.map((r) => normalise(r.year, r));
 }

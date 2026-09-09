@@ -40,7 +40,7 @@ export const isSealed = (v: unknown): v is Sealed => !!v && typeof v === "object
 export async function createVault(passphrase: string): Promise<{ meta: VaultMeta; key: CryptoKey }> {
   const salt = randomBytes(16);
   const key = await deriveKey(passphrase, salt);
-  return { meta: { salt: b64(salt), check: await seal(key, "t1-fieldguide"), iterations: KDF_ITERATIONS }, key };
+  return { meta: { salt: b64(salt), check: await seal(key, "slipfold"), iterations: KDF_ITERATIONS }, key };
 }
 
 /** Derive the key for an existing vault and prove the passphrase is right. Throws on a wrong passphrase. */
@@ -48,7 +48,7 @@ export async function unlockVault(passphrase: string, meta: VaultMeta): Promise<
   const key = await deriveKey(passphrase, unb64(meta.salt), meta.iterations ?? KDF_ITERATIONS);
   try {
     const v = await open<string>(key, meta.check);
-    if (v !== "t1-fieldguide") throw new Error();
+    if (v !== "slipfold") throw new Error();
   } catch {
     throw new Error("Wrong passphrase.");
   }
@@ -57,7 +57,7 @@ export async function unlockVault(passphrase: string, meta: VaultMeta): Promise<
 
 // Keep the unlocked key for the life of the tab so a reload does not re-prompt. sessionStorage is
 // cleared when the tab closes; it never touches disk the way localStorage does.
-const SESSION_KEY = "t1-fieldguide.session-key";
+const SESSION_KEY = "slipfold.session-key";
 
 export async function rememberKey(key: CryptoKey): Promise<void> {
   try {
