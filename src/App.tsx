@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { compute, type Line, type Section } from "./lib/engine";
 import { EXAMPLE_RETURN, SLIP_DEFS, emptyReturn, newSlip, num, type MaritalStatus, type Slip, type SlipKind, type TaxReturn } from "./lib/model";
-import { PROVINCES, PROVINCE_LIST, TAX_YEAR, type ProvinceCode } from "./lib/rules2025";
+import { LATEST_YEAR, SUPPORTED_YEARS, getRules, isSupportedYear, type ProvinceCode } from "./lib/rules";
 import { deleteYear, exportJson, getVaultMeta, isEncryptedBackup, listYears, loadReturn, parseImport, removePassphrase, rollForward, saveReturn, setPassphrase, unlock } from "./lib/store";
 import { forgetKey, recallKey, rememberKey, type VaultMeta } from "./lib/crypto";
 import { Caption, Card, CopyButton, Field, MoneyInput, Notice, btnGhost, btnIcon, btnPrimary, inputCls, money } from "./ui";
@@ -21,7 +21,7 @@ const SECTIONS: { id: Section; title: string; blurb: string }[] = [
   { id: "income", title: "Step 2 — Total income", blurb: "Lines 10100 to 15000. Enter each amount exactly as shown; the 'from' list tells you which slip boxes were added." },
   { id: "deductions", title: "Step 3 — Net income", blurb: "Deductions come off before tax is calculated. Line 23600 drives benefits and several credits." },
   { id: "taxable", title: "Step 4 — Taxable income", blurb: "Usually the same as net income unless you have losses from other years." },
-  { id: "fedCredits", title: "Step 5, Part A — Federal non-refundable credits", blurb: "Dollar amounts first (lines 30000–33500), then multiplied by 14.5%." },
+  { id: "fedCredits", title: "Step 5, Part A — Federal non-refundable credits", blurb: "Dollar amounts first (lines 30000–33500), then multiplied by the lowest federal rate." },
   { id: "fedTax", title: "Step 5, Part B — Federal tax", blurb: "Tax on taxable income, minus credits." },
   { id: "provincial", title: "Step 6 — Provincial or territorial tax (form 428)", blurb: "The same structure as the federal part, with your province's amounts and rates." },
   { id: "refund", title: "Step 7 — Refund or balance owing", blurb: "What you already paid versus what you owe." },
@@ -43,10 +43,10 @@ export default function App() {
     try {
       const ys = await listYears();
       setYears(ys);
-      const y = ys[0] ?? TAX_YEAR;
-      setRet((await loadReturn(y, k)) ?? emptyReturn(TAX_YEAR));
+      const y = ys[0] ?? LATEST_YEAR;
+      setRet((await loadReturn(y, k)) ?? emptyReturn(LATEST_YEAR));
     } catch {
-      setRet(emptyReturn(TAX_YEAR));
+      setRet(emptyReturn(LATEST_YEAR));
     }
   };
   useEffect(() => {
@@ -107,6 +107,15 @@ export default function App() {
       setTab("profile");
     }
   };
+  const startYear = async (y: number) => {
+    const existing = await loadReturn(y, key);
+    const r = existing ?? { ...emptyReturn(y), profile: { ...ret.profile } };
+    if (!existing) await saveReturn(r, key);
+    setYears(await listYears());
+    setRet(r);
+    setTab(existing ? "profile" : "slips");
+    if (!existing) say(`Blank ${y} return started with your profile copied.`);
+  };
   const startNextYear = async () => {
     const next = rollForward(ret);
     await saveReturn(next, key);
@@ -128,13 +137,18 @@ export default function App() {
             <label className="text-xs text-ink-soft">
               Tax year{" "}
               <select className="rounded-md border border-rule bg-surface px-2 py-1 text-sm" value={ret.year} onChange={(e) => switchYear(Number(e.target.value))}>
-                {(years.includes(ret.year) ? years : [ret.year, ...years]).map((y) => (
+                {(years.includes(ret.year) ? years : [ret.year, ...years]).sort((a, b) => b - a).map((y) => (
                   <option key={y} value={y}>
                     {y}
                   </option>
                 ))}
               </select>
             </label>
+            {SUPPORTED_YEARS.filter((y) => !years.includes(y) && y !== ret.year).map((y) => (
+              <button key={y} className={btnGhost} onClick={() => startYear(y)} title={`Start a ${y} return (rules for ${y} are built in)`}>
+                + {y} return
+              </button>
+            ))}
             <span className="hidden text-xs text-ink-soft sm:inline">{vault ? "Encrypted on this device." : "Saved on this device only."}</span>
             {vault && (
               <button
@@ -163,15 +177,15 @@ export default function App() {
       {flash && <div className="mx-auto max-w-6xl px-4 pt-3 text-sm text-good">{flash}</div>}
 
       <main className="mx-auto grid max-w-6xl gap-5 px-4 py-5">
-        {ret.year !== TAX_YEAR && (
-          <Notice tone="warn" title={`Rates for ${ret.year} are not published yet`} items={[`Every figure is computed with the ${TAX_YEAR} rules. Use this year to keep your slips and carry-forwards organised; the numbers will be right once the ${ret.year} rules are added.`]} />
+        {!isSupportedYear(ret.year) && (
+          <Notice tone="warn" title={`Rates for ${ret.year} are not built in yet`} items={[`Every figure is computed with the ${LATEST_YEAR} rules. Use this year to keep your slips and carry-forwards organised; the numbers will be right once the ${ret.year} rules are added. Years built in: ${SUPPORTED_YEARS.join(", ")}.`]} />
         )}
 
         {tab === "profile" && <ProfileTab ret={ret} patch={patch} />}
         {tab === "slips" && <SlipsTab ret={ret} patch={patch} />}
         {tab === "other" && <OtherTab ret={ret} patch={patch} />}
         {tab === "carry" && <CarryTab ret={ret} patch={patch} />}
-        {tab === "return" && <ReturnTab lines={result.lines} summary={result.summary} warnings={result.warnings} province={ret.profile.province} />}
+        {tab === "return" && <ReturnTab lines={result.lines} summary={result.summary} warnings={result.warnings} province={ret.profile.province} year={ret.year} />}
         {tab === "next" && <NextTab lines={result.lines} year={ret.year} onStart={startNextYear} />}
         {tab === "backup" && (
           <BackupTab
@@ -208,7 +222,7 @@ export default function App() {
               await deleteYear(y);
               const ys = await listYears();
               setYears(ys);
-              setRet(ys[0] ? (await loadReturn(ys[0], key))! : emptyReturn(TAX_YEAR));
+              setRet(ys[0] ? (await loadReturn(ys[0], key))! : emptyReturn(LATEST_YEAR));
               say(`${y} deleted.`);
             }}
           />
@@ -218,8 +232,7 @@ export default function App() {
       <footer className="border-t border-rule">
         <div className="mx-auto max-w-6xl px-4 py-4 text-xs leading-relaxed text-ink-soft">
           This app prepares values; it does not file. Type them into any CRA-certified software or onto the paper T1, and check the
-          result against that software before you send it. Nothing you enter leaves this device. Rules: {TAX_YEAR} federal and
-          provincial figures, cited in the source.{" "}
+          result against that software before you send it. Nothing you enter leaves this device. Rules built in: {SUPPORTED_YEARS.join(" and ")}, every figure cited in the source.{" "}
           <a className="underline hover:text-ink" href="https://github.com/akaushal-nexuscmms/slipfold" target="_blank" rel="noreferrer">
             Source on GitHub
           </a>
@@ -234,6 +247,7 @@ export default function App() {
 
 function ProfileTab({ ret, patch }: { ret: TaxReturn; patch: (p: Partial<TaxReturn>) => void }) {
   const p = ret.profile;
+  const { PROVINCES, PROVINCE_LIST, FEDERAL } = getRules(ret.year);
   const set = <K extends keyof TaxReturn["profile"]>(k: K, v: TaxReturn["profile"][K]) => patch({ profile: { ...p, [k]: v } });
   const hasSpouse = p.maritalStatus === "married" || p.maritalStatus === "common-law";
   const [showSin, setShowSin] = useState(false);
@@ -299,7 +313,7 @@ function ProfileTab({ ret, patch }: { ret: TaxReturn; patch: (p: Partial<TaxRetu
           <input type="checkbox" className="mt-1" checked={p.disabilityCertified} onChange={(e) => set("disabilityCertified", e.target.checked)} />
           <span>
             The CRA has approved a T2201 disability tax credit certificate for me
-            <span className="block text-xs text-ink-soft">Unlocks line 31600 ($10,138 federally, {money(PROVINCES[p.province].disabilityAmount)} provincially). Only if approved — not merely applied for.</span>
+            <span className="block text-xs text-ink-soft">Unlocks line 31600 ({money(FEDERAL.disabilityAmount)} federally, {money(PROVINCES[p.province].disabilityAmount)} provincially). Only if approved — not merely applied for.</span>
           </span>
         </label>
       </div>
@@ -452,7 +466,7 @@ function CarryTab({ ret, patch }: { ret: TaxReturn; patch: (p: Partial<TaxReturn
 
 // ---------------- 5 · The return ----------------
 
-function ReturnTab({ lines, summary, warnings, province }: { lines: Line[]; summary: ReturnType<typeof compute>["summary"]; warnings: string[]; province: ProvinceCode }) {
+function ReturnTab({ lines, summary, warnings, province, year }: { lines: Line[]; summary: ReturnType<typeof compute>["summary"]; warnings: string[]; province: ProvinceCode; year: number }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const toggle = (k: string) =>
     setOpen((s) => {
@@ -466,7 +480,7 @@ function ReturnTab({ lines, summary, warnings, province }: { lines: Line[]; summ
     .filter((l) => l.section !== "carry" && visible(l))
     .map((l) => `${l.form === "T1" ? "" : l.form + " "}line ${l.line}\t${l.label}\t${l.value.toFixed(2)}`)
     .join("\n");
-  const prov = PROVINCES[province];
+  const prov = getRules(year).PROVINCES[province];
   return (
     <>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

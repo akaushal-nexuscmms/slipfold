@@ -1,7 +1,7 @@
 // The return as the user enters it, plus the slip-box field guide the UI renders from.
 // Money is a plain number of dollars (cents allowed). Empty inputs are 0.
 
-import type { ProvinceCode } from "./rules2025.ts";
+import type { ProvinceCode } from "./rules.ts";
 export type Province = ProvinceCode;
 export type MaritalStatus = "single" | "married" | "common-law" | "separated" | "divorced" | "widowed";
 

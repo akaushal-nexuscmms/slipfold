@@ -87,7 +87,7 @@ with sync_playwright() as p:
     body = page.inner_text("body")
     check("roll forward: 2026 started, issuers kept", "2026 started from 2025" in body and "Prairie Logistics" in body)
     check("roll forward: amounts cleared (box 14 empty)", page.locator("input[type=number]").first.input_value() == "")
-    check("roll forward: 2025-rules warning shown for 2026", "not published yet" in page.inner_text("body").lower())
+    check("roll forward: no-rules warning shown for 2026", "not built in yet" in page.inner_text("body").lower())
     page.screenshot(path=f"{OUT}/06-rolled-2026.png", full_page=True)
     # year selector has both years; switching back restores 2025 data
     opts = [o.inner_text() for o in page.locator("select").first.locator("option").all()]
@@ -105,11 +105,29 @@ with sync_playwright() as p:
         page.get_by_role("button", name=re.compile(r"Export all years")).click()
     d = dl.value; path = f"{OUT}/{d.suggested_filename}"; d.save_as(path)
     j = json.load(open(path, encoding="utf-8"))
-    check("export: JSON with both years", j.get("app") == "slipfold" and sorted(r["year"] for r in j["returns"]) == [2025, 2026], str([r["year"] for r in j["returns"]]))
+    check("export: JSON with both years", j.get("app") == "slipfold" and sorted(r["year"] for r in j["returns"])[-2:] == [2025, 2026], str([r["year"] for r in j["returns"]]))
 
     # PWA manifest + service worker registration (dev mode serves manifest; SW only in build)
     mf = page.evaluate("fetch('/manifest.webmanifest').then(r => r.status)")
     check("pwa: manifest served", mf == 200, str(mf))
+
+    # ---------- tax year 2024 ----------
+    page.get_by_role("button", name=re.compile(r"1 · You")).click(); page.wait_for_timeout(200)
+    check("years: a '+ 2024 return' button is offered", page.get_by_role("button", name="+ 2024 return").count() == 1)
+    page.get_by_role("button", name="+ 2024 return").click(); page.wait_for_timeout(600)
+    body = page.inner_text("body")
+    check("years: 2024 return started with profile copied", "Your 2024 return" in body and "profile copied" in body)
+    check("years: no 'not built in' warning for 2024", "not built in yet" not in body.lower())
+    page.get_by_role("button", name="+ T4", exact=True).click(); page.wait_for_timeout(200)
+    cards = page.locator("div.rounded-xl"); last = cards.nth(cards.count() - 1)
+    last.locator("input").first.fill("Employer 2024"); last.locator("input[type=number]").nth(0).fill("70000"); page.wait_for_timeout(500)
+    page.get_by_role("button", name=re.compile(r"5 · Your return")).click(); page.wait_for_timeout(400)
+    body = page.inner_text("body")
+    check("years: 2024 rules applied (Canada employment amount 1,433, BPA 15,705)", "$1,433.00" in body and "$15,705.00" in body)
+    check("years: federal credit rate shown as 15% for 2024", "15%" in body or "15.00%" in body)
+    opts = [o.inner_text() for o in page.locator("select").first.locator("option").all()]
+    check("years: selector lists 2026, 2025 and 2024", all(y in opts for y in ["2026", "2025", "2024"]), str(opts))
+    page.locator("select").first.select_option("2025"); page.wait_for_timeout(500)
 
     # ---------- encryption at rest ----------
     page.get_by_role("button", name="Backup").click(); page.wait_for_timeout(200)
@@ -148,7 +166,7 @@ with sync_playwright() as p:
     page.locator("input[type=password]").last.fill("wrong"); page.get_by_role("button", name="Import", exact=True).click(); page.wait_for_timeout(1500)
     check("vault: import with wrong passphrase rejected", "Wrong passphrase for this backup" in page.inner_text("body"))
     page.locator("input[type=password]").last.fill("correct horse battery staple"); page.get_by_role("button", name="Import", exact=True).click(); page.wait_for_timeout(2000)
-    check("vault: import with right passphrase succeeds", "Imported 2 returns" in page.inner_text("body"))
+    check("vault: import with right passphrase succeeds", "Imported 3 returns" in page.inner_text("body"))
     # remove passphrase → rows plain again
     page.on("dialog", lambda dlg: dlg.accept())
     page.get_by_role("button", name="Remove passphrase").click(); page.wait_for_timeout(1500)

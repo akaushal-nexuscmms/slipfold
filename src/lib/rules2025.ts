@@ -18,6 +18,16 @@
 
 export const TAX_YEAR = 2025;
 
+/** Everything the engine needs for one tax year. Each year's file exports one of these. */
+export type YearRules = {
+  year: number;
+  FEDERAL: typeof FEDERAL;
+  CPP: typeof CPP;
+  EI: typeof EI;
+  PROVINCES: Record<ProvinceCode, ProvinceRules>;
+  PROVINCE_LIST: { code: ProvinceCode; name: string }[];
+};
+
 export type Bracket = { upTo: number; rate: number }; // upTo = Infinity for the top bracket
 
 export const FEDERAL = {
@@ -121,7 +131,7 @@ export type LowIncomeRule =
   | { kind: "bc"; line: string; max: number; threshold: number; rate: number } // individual net income only [R1]
   | { kind: "family"; line: string; basic: number; spouse: number; maxTotal: number; thresholdSingle: number; thresholdFamily: number; rate: number; eligibleSingle?: number; eligibleFamily?: number; ageSelf?: number }; // adjusted family income = your net income + spouse's [R2][R3][R4]; ageSelf = PE's extra for 65+
 
-const std = (o: Omit<ProvinceRules, "lines" | "finalLine" | "medicalRate"> & { finalLine?: string }): ProvinceRules => ({
+export const std = (o: Omit<ProvinceRules, "lines" | "finalLine" | "medicalRate"> & { finalLine?: string }): ProvinceRules => ({
   medicalRate: 0.03,
   lines: { tax: "42" },
   finalLine: o.finalLine ?? "92",
@@ -129,7 +139,7 @@ const std = (o: Omit<ProvinceRules, "lines" | "finalLine" | "medicalRate"> & { f
 });
 
 // Ontario health premium schedule [O1] — unchanged since 2004.
-function ontarioHealthPremium(ti: number): number {
+export function ontarioHealthPremium(ti: number): number {
   if (ti <= 20_000) return 0;
   if (ti <= 36_000) return round2(Math.min(300, (ti - 20_000) * 0.06));
   if (ti <= 48_000) return round2(Math.min(450, 300 + (ti - 36_000) * 0.06));
@@ -261,3 +271,5 @@ export function marginalRate(income: number, brackets: Bracket[]): number {
 }
 
 export const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+export const RULES_2025: YearRules = { year: 2025, FEDERAL, CPP, EI, PROVINCES, PROVINCE_LIST };

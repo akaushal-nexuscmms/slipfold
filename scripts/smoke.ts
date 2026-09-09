@@ -2,7 +2,9 @@
 // Expected values below were computed by hand from the 2025 rules, not by the engine.
 import { compute, bpaFederal } from "../src/lib/engine.ts";
 import { EXAMPLE_RETURN, EMPTY_CARRY, EMPTY_OTHER, EMPTY_PROFILE, emptyReturn, type TaxReturn } from "../src/lib/model.ts";
-import { PROVINCES, PROVINCE_LIST, taxOn, FEDERAL } from "../src/lib/rules2025.ts";
+import { PROVINCES, PROVINCE_LIST, taxOn, FEDERAL, RULES_2025 } from "../src/lib/rules2025.ts";
+import { RULES_2024 } from "../src/lib/rules2024.ts";
+import { getRules, SUPPORTED_YEARS } from "../src/lib/rules.ts";
 import { rollForward } from "../src/lib/store.ts";
 import { createVault, unlockVault, seal, open, isSealed } from "../src/lib/crypto.ts";
 
@@ -18,9 +20,9 @@ const round2x = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 // ---------- brackets ----------
 eq("federal tax on 54,435 (all in first bracket)", taxOn(54_435, FEDERAL.brackets), 7893.08);
 eq("federal tax on 120,000 spans three brackets", taxOn(120_000, FEDERAL.brackets), 57375 * 0.145 + 57375 * 0.205 + 5250 * 0.26);
-eq("BPA full below phase-out", bpaFederal(100_000), 16129);
-eq("BPA minimum above phase-out", bpaFederal(300_000), 14538);
-eq("BPA midway", bpaFederal((177_882 + 253_414) / 2), 15333.5);
+eq("BPA full below phase-out", bpaFederal(100_000, RULES_2025), 16129);
+eq("BPA minimum above phase-out", bpaFederal(300_000, RULES_2025), 14538);
+eq("BPA midway", bpaFederal((177_882 + 253_414) / 2, RULES_2025), 15333.5);
 
 // ---------- worked example: single, Manitoba, one T4, RRSP 5,000, donations 300 ----------
 // Hand calculation:
@@ -220,6 +222,38 @@ eq("rollForward: tuition carried", rollForward(stu).carry.tuitionFederal, 3289.2
   eq("SK senior supplement and home buyers' amount on the 428", [line(sk, "58220"), line(sk, "58357")], [2028, 15000]);
   const yt = compute({ ...emptyReturn(2025), profile: { ...EMPTY_PROFILE, province: "YT", dateOfBirth: "1990-01-01" }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: 40000, b26: 40000 } }] });
   eq("YT carries the Canada employment amount", line(yt, "58310"), 1471);
+}
+
+// ---------- tax year 2024 ----------
+{
+  eq("years: 2025 and 2024 supported, newest first", SUPPORTED_YEARS, [2025, 2024]);
+  eq("2024 federal tax on 69,290 = 55,867 × 15% + 13,423 × 20.5%", taxOn(69_290, RULES_2024.FEDERAL.brackets), 11131.77);
+  eq("2024 BPA phase-out", [bpaFederal(100_000, RULES_2024), bpaFederal(300_000, RULES_2024)], [15705, 14156]);
+  // Manitoba employee, 2024: box 14 70,000; CPP at the 2024 max 3,867.50 + CPP2 60; EI at the max 1,049.12
+  //  enhanced deduction = 1% × 65,000 = 650 + CPP2 60 = 710 → net 69,290; base CPP credit = 4.95% × 65,000 = 3,217.50
+  //  federal credits (15,705 + 3,217.50 + 1,049.12 + 1,433) × 15% = 3,210.69 → net federal 11,131.77 − 3,210.69 = 7,921.08
+  //  Manitoba: 5,076 + 22,290 × 12.75% = 7,917.98 − (15,780 + 3,217.50 + 1,049.12) × 10.8% = 2,165.03 → 5,752.95
+  const mb24 = compute({ ...emptyReturn(2024), profile: { ...EMPTY_PROFILE, province: "MB", dateOfBirth: "1990-01-01" }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: 70000, b16: 3867.5, b16a: 60, b18: 1049.12, b22: 12000, b26: 70000 } }] });
+  eq("2024 MB: enhanced CPP deduction 650 + CPP2 60", line(mb24, "22215"), 710);
+  eq("2024 MB: base CPP credit at the 2024 maximum", line(mb24, "30800"), 3217.5);
+  eq("2024 MB: EI credit at the 2024 maximum", line(mb24, "31200"), 1049.12);
+  eq("2024 MB: Canada employment amount 1,433", line(mb24, "31260"), 1433);
+  eq("2024 MB: total federal credits", line(mb24, "35000"), 3210.69);
+  eq("2024 MB: net federal tax", line(mb24, "42000"), 7921.08);
+  eq("2024 MB: Manitoba credits", line(mb24, "61500"), 2165.03);
+  eq("2024 MB: Manitoba tax", line(mb24, "92"), 5752.95);
+  eq("2024 MB: result reports its year", mb24.year, 2024);
+  eq("2024: unsupported year falls back to latest rules", getRules(2023).year, 2025);
+  // 2024 Ontario: surtax thresholds 5,554 / 7,108 and tax reduction basic 286
+  const on24 = compute({ ...emptyReturn(2024), profile: { ...EMPTY_PROFILE, province: "ON", dateOfBirth: "1990-01-01" }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: 20000, b26: 20000 } }] });
+  // ON tax after credits = (20,000 − 12,399) × 5.05% = 383.85 → reduction 2 × 286 − 383.85 = 188.15 → tax 195.70
+  eq("2024 ON tax reduction", [line(on24, "80"), line(on24, "90")], [188.15, 195.7]);
+  // 2024 BC reduction: 547 − 3.56% × (30,000 − 24,338) = 345.43
+  const bc24 = compute({ ...emptyReturn(2024), profile: { ...EMPTY_PROFILE, province: "BC", dateOfBirth: "1990-01-01" }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: 30000, b26: 30000 } }] });
+  eq("2024 BC tax reduction", line(bc24, "79"), 345.43);
+  // 2024 NS BPA supplement: 11,481 at 25,000 net income, 8,481 at 75,000, linear between
+  const nsBpa = (income: number) => compute({ ...emptyReturn(2024), profile: { ...EMPTY_PROFILE, province: "NS", dateOfBirth: "1990-01-01" }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: income, b26: income } }] }).lines.find((l) => l.line === "58040")?.value;
+  eq("2024 NS BPA with supplement", [nsBpa(20000), nsBpa(50000), nsBpa(80000)], [11481, 9981, 8481]);
 }
 
 // ---------- encryption at rest ----------

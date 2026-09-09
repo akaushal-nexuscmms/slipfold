@@ -12,7 +12,17 @@ why the line is what it is, and hands you the balances to carry forward. You typ
 Everything runs on your device. No account, no upload, no server. Returns are stored in
 your browser (IndexedDB); export a backup file before switching devices.
 
-## What it covers — tax year 2025
+## Tax years
+
+**2025 and 2024** are built in, each in its own rules file with a source beside every
+figure (`src/lib/rules2025.ts`, `src/lib/rules2024.ts`). Provincial figures for both years
+come from the CRA's own 428 forms, read page by page. Start a return for any built-in year
+from the header; a year without rules loads with the latest rules and a warning.
+
+Verifying against a real Notice of Assessment is the strongest check there is: enter the
+slips from a past year and compare line by line.
+
+## What it covers
 
 - **All ten provinces and three territories.** Federal T1 plus the provincial 428 form for
   every jurisdiction except Quebec, which gets the federal side with the Quebec abatement
@@ -40,9 +50,9 @@ reductions and MB479-style refundable credits, Quebec's provincial return.
 
 ## Every number has a source
 
-`src/lib/rules2025.ts` holds every rate, threshold and amount, each with the page it was
-checked against on 2026-09-09 (TaxTips.ca tables, CRA payroll and CPP announcements).
-`scripts/smoke.ts` checks the engine against hand-computed returns — ~90 assertions across
+Each year's rules file holds every rate, threshold and amount with the page it was checked
+against (the CRA 428 forms for every province, CRA payroll and CPP announcements, TaxTips tables).
+`scripts/smoke.ts` checks the engine against hand-computed returns — ~130 assertions across
 Manitoba, Ontario, BC, Alberta, Saskatchewan and Quebec profiles, multi-employer CPP/EI
 overpayments, dividends, capital gains and losses, tuition carry-forward, seniors, and the
 roll-forward.

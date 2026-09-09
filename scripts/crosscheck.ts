@@ -8,7 +8,7 @@
 import { readFileSync } from "node:fs";
 import { compute } from "../src/lib/engine.ts";
 import { EMPTY_PROFILE, emptyReturn, type TaxReturn } from "../src/lib/model.ts";
-import { CPP, FEDERAL, PROVINCES, PROVINCE_LIST, type ProvinceCode } from "../src/lib/rules2025.ts";
+import { CPP, FEDERAL, PROVINCES, PROVINCE_LIST, type ProvinceCode } from "../src/lib/rules2025.ts"; // EY snapshot is 2025
 
 const ey = JSON.parse(readFileSync(process.argv[2], "utf8")) as Record<string, Record<string, { taxpay: number; marginal: string }>>;
 

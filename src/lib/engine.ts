@@ -1,7 +1,7 @@
 // Computes every line of the 2025 T1 (federal) and the provincial/territorial 428 form
 // from the slips and facts the user entered, and explains each one. Pure: no UI, no storage.
 
-import { CPP, EI, FEDERAL, PROVINCES, TAX_YEAR, marginalRate, round2, taxOn, type ProvinceRules } from "./rules2025.ts";
+import { getRules, marginalRate, round2, taxOn, type ProvinceRules, type YearRules } from "./rules.ts";
 import { num, type Slip, type TaxReturn } from "./model.ts";
 
 export type Section = "income" | "deductions" | "taxable" | "fedCredits" | "fedTax" | "provincial" | "refund" | "carry";
@@ -72,6 +72,8 @@ function sumBox(slips: Slip[], kind: Slip["kind"], key: string, boxLabel: string
 
 export function compute(ret: TaxReturn): Result {
   const { profile: p, slips, other: o, carry } = ret;
+  const rules = getRules(ret.year);
+  const { FEDERAL, CPP, EI, PROVINCES } = rules;
   const prov = PROVINCES[p.province] ?? PROVINCES.MB;
   const L: Line[] = [];
   const warnings: string[] = [];
@@ -216,7 +218,7 @@ export function compute(ret: TaxReturn): Result {
   push({ line: "26000", form: "T1", label: "Taxable income", value: taxableIncome, section: "taxable", always: true, explain: "What the tax brackets are applied to." });
 
   // ---------------- Step 5: federal non-refundable credits ----------------
-  const fedBpa = bpaFederal(netIncome);
+  const fedBpa = bpaFederal(netIncome, rules);
   push({ line: "30000", form: "T1", label: "Basic personal amount", value: fedBpa, section: "fedCredits", always: true, from: [`Net income ${money(netIncome)}`], explain: netIncome <= FEDERAL.bpa.phaseStart ? `Everyone gets ${money(FEDERAL.bpa.max)} of income tax-free at the federal level.` : `Reduced from ${money(FEDERAL.bpa.max)} because net income is above ${money(FEDERAL.bpa.phaseStart)}; it bottoms out at ${money(FEDERAL.bpa.min)} at ${money(FEDERAL.bpa.phaseEnd)}.` });
 
   const fedAge = age !== null && age >= 65 ? round2(Math.max(0, FEDERAL.age.amount - FEDERAL.age.reductionRate * Math.max(0, netIncome - FEDERAL.age.threshold))) : 0;
@@ -318,7 +320,7 @@ export function compute(ret: TaxReturn): Result {
 
   const combinedMarginal = marginalRate(taxableIncome, FEDERAL.brackets) + (quebec ? 0 : marginalRate(taxableIncome, prov.brackets));
   return {
-    year: TAX_YEAR,
+    year: rules.year,
     province: p.province,
     lines: L,
     summary: {
@@ -337,8 +339,8 @@ export function compute(ret: TaxReturn): Result {
   };
 }
 
-export function bpaFederal(netIncome: number): number {
-  const { max, min, phaseStart, phaseEnd } = FEDERAL.bpa;
+export function bpaFederal(netIncome: number, rules: YearRules): number {
+  const { max, min, phaseStart, phaseEnd } = rules.FEDERAL.bpa;
   if (netIncome <= phaseStart) return max;
   if (netIncome >= phaseEnd) return min;
   return round2(max - ((netIncome - phaseStart) / (phaseEnd - phaseStart)) * (max - min));
