@@ -13,6 +13,7 @@ const eq = (name: string, got: unknown, want: unknown) => {
   console.log(`${ok ? "ok  " : "FAIL"} ${name}${ok ? "" : `\n     got  ${JSON.stringify(got)}\n     want ${JSON.stringify(want)}`}`);
 };
 const line = (r: ReturnType<typeof compute>, n: string) => r.lines.find((l) => l.line === n)?.value;
+const round2x = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
 
 // ---------- brackets ----------
 eq("federal tax on 54,435 (all in first bracket)", taxOn(54_435, FEDERAL.brackets), 7893.08);
@@ -168,6 +169,58 @@ eq("rollForward: issuers kept, amounts cleared", next.slips.map((s) => [s.kind, 
 eq("rollForward: unused RRSP carried", next.carry.unusedRrspContributions, 3000);
 eq("rollForward: deduction limit reset (comes from NOA)", next.carry.rrspDeductionLimit, 0);
 eq("rollForward: tuition carried", rollForward(stu).carry.tuitionFederal, 3289.22);
+
+// ---------- low-income tax reductions (from the 2025 forms) ----------
+{
+  const at = (prov: "BC" | "NB" | "NL", income: number, spouseNet?: number) =>
+    compute({ ...emptyReturn(2025), profile: { ...EMPTY_PROFILE, province: prov, dateOfBirth: "1990-01-01", maritalStatus: spouseNet === undefined ? "single" : "married", spouseNetIncome: spouseNet ?? 0 }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: income, b26: Math.min(income, 71300) } }] });
+  // BC: 562 − 3.56% × (30,000 − 25,020) = 384.71
+  eq("BC reduction at 30k", line(at("BC", 30000), "79"), 384.71);
+  eq("BC reduction gone at 40,807+", at("BC", 45000).lines.some((l) => l.line === "79"), false);
+  // NB single: 802 − 3% × (30,000 − 21,920) = 559.60
+  eq("NB reduction at 30k single", line(at("NB", 30000), "86"), 559.6);
+  // NB couple: (802 + 802) − 3% × (30,000 + 10,000 − 21,920) = 1,061.60, capped by NB tax
+  const nbFam = at("NB", 30000, 10000);
+  eq("NB reduction for a couple uses family income", line(nbFam, "86"), Math.min(1061.6, (line(nbFam, "42")! - line(nbFam, "61500")!)) );
+  eq("NB ineligible above 48,653 single", at("NB", 50000).lines.some((l) => l.line === "86"), false);
+  // NL single: 997 − 16% × (30,000 − 23,928) = 25.48
+  eq("NL reduction at 30k single", line(at("NL", 30000), "104"), 25.48);
+  // NL couple: (997 + 557) − 16% × (30,000 + 5,000 − 40,460 → 0) = 1,554 capped by NL tax
+  const nlFam = at("NL", 30000, 5000);
+  eq("NL couple below family threshold gets the full 1,554 or all its tax", line(nlFam, "104"), Math.min(1554, round2x(line(nlFam, "42")! - line(nlFam, "61500")!)));
+  eq("NL tax is zero for that couple", line(nlFam, "92"), 0);
+}
+
+// ---------- figures read off the 2025 forms ----------
+{
+  const on = compute({ ...emptyReturn(2025), profile: { ...EMPTY_PROFILE, province: "ON", dateOfBirth: "1990-01-01", maritalStatus: "married", spouseNetIncome: 1000 }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: 60000, b26: 60000 } }] });
+  eq("ON spouse amount is capped at 10,823 even when the partner earns a little (base 11,905)", line(on, "58120"), 10823);
+  const ns = compute({ ...emptyReturn(2025), profile: { ...EMPTY_PROFILE, province: "NS", dateOfBirth: "1990-01-01", maritalStatus: "married", spouseNetIncome: 0 }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: 60000, b26: 60000 } }] });
+  eq("NS spouse amount subtracts at least 874: 12,618 − 874 = 11,744", line(ns, "58120"), 11744);
+  const ab = compute({ ...emptyReturn(2025), profile: { ...EMPTY_PROFILE, province: "AB", dateOfBirth: "1990-01-01" }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: 60000, b26: 60000 } }], other: { ...EMPTY_OTHER, donations: 300 } });
+  eq("AB donations: 200 × 60% + 100 × 21% = 141", line(ab, "58969"), 141);
+  // Ontario tax reduction: 20,000 income, no CPP/EI → ON tax after credits = (20,000 − 12,747) × 5.05% = 366.28 → reduction 2×294 − 366.28 = 221.72 → tax 144.56
+  const onLow = compute({ ...emptyReturn(2025), profile: { ...EMPTY_PROFILE, province: "ON", dateOfBirth: "1990-01-01" }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: 20000, b26: 20000 } }] });
+  eq("ON tax reduction at 20k", [line(onLow, "80"), line(onLow, "90")], [221.72, 144.56]);
+  // Ontario surtax before the dividend credit: 200k salary + 20k eligible dividends
+  const onDiv = compute({ ...emptyReturn(2025), profile: { ...EMPTY_PROFILE, province: "ON", dateOfBirth: "1990-01-01" }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: 200000, b26: 71300 } }, { id: "d", kind: "t5", issuer: "B", values: { b24: 20000 } }] });
+  eq("ON surtax line present and dividend credit applied after it", [onDiv.lines.some((l) => l.line === "68"), onDiv.lines.findIndex((l) => l.line === "68") < onDiv.lines.findIndex((l) => l.line === "61520")], [true, true]);
+  // NS age tax credit: 70-year-old, taxable 20,000 pension
+  const nsAge = compute({ ...emptyReturn(2025), profile: { ...EMPTY_PROFILE, province: "NS", dateOfBirth: "1955-01-01" }, slips: [{ id: "p", kind: "t4a", issuer: "Plan", values: { b016: 20000 } }] });
+  eq("NS age tax credit shows for a senior under 24,000 taxable (capped at tax)", (line(nsAge, "98") ?? 0) > 0 && line(nsAge, "92") === 0, true);
+  // NS/PE low-income reductions are zero at 30k single (why EY matched there), positive lower down
+  const ns30 = compute({ ...emptyReturn(2025), profile: { ...EMPTY_PROFILE, province: "NS", dateOfBirth: "1990-01-01" }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: 30000, b26: 30000 } }] });
+  eq("NS reduction zero at 30k", ns30.lines.some((l) => l.line === "84"), false);
+  const pe25 = compute({ ...emptyReturn(2025), profile: { ...EMPTY_PROFILE, province: "PE", dateOfBirth: "1990-01-01" }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: 25000, b26: 25000 } }] });
+  eq("PE reduction at 25k single = 350 − 5% × 2,350 = 232.50", line(pe25, "87"), 232.5);
+  const pe25old = compute({ ...pe25 as never, ...emptyReturn(2025), profile: { ...EMPTY_PROFILE, province: "PE", dateOfBirth: "1955-01-01" }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: 25000, b26: 25000 } }] });
+  eq("PE reduction adds 250 for 65+", line(pe25old, "87"), round2x(Math.min(482.5, (line(pe25old, "42") ?? 0) - (line(pe25old, "61500") ?? 0))));
+  // SK senior supplement + home buyers; YT employment amount
+  const sk = compute({ ...emptyReturn(2025), profile: { ...EMPTY_PROFILE, province: "SK", dateOfBirth: "1955-01-01" }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: 40000, b26: 40000 } }], other: { ...EMPTY_OTHER, homeBuyer: true } });
+  eq("SK senior supplement and home buyers' amount on the 428", [line(sk, "58220"), line(sk, "58357")], [2028, 15000]);
+  const yt = compute({ ...emptyReturn(2025), profile: { ...EMPTY_PROFILE, province: "YT", dateOfBirth: "1990-01-01" }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: 40000, b26: 40000 } }] });
+  eq("YT carries the Canada employment amount", line(yt, "58310"), 1471);
+}
 
 // ---------- encryption at rest ----------
 {

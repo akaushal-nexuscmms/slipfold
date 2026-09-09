@@ -285,7 +285,7 @@ export function compute(ret: TaxReturn): Result {
   if (seCpp) push({ line: "42100", form: "T1", label: "CPP contributions payable on self-employment income", value: round2(seCpp + seCpp2), section: "fedTax", from: [`Base+enhanced ${money(seCpp)}`, ...(seCpp2 ? [`CPP2 ${money(seCpp2)}`] : [])], explain: "Both halves of CPP on business income are paid with your return rather than through payroll." });
 
   // ---------------- Provincial 428 ----------------
-  const provTax = quebec ? { tax: 0, refundable: 0, tuitionCarry: round2(tuitionThisYear.total + num(carry.tuitionProvincial)), warnings: [] as string[] } : computeProvince(prov, { taxableIncome, netIncome, age, hasSpouse, spouseNet: num(p.spouseNetIncome), cppBase: round2(cppBase + seBaseHalf), ei: round2(eiAllowed), pension: t4a_016.total, disability: p.disabilityCertified, studentLoan: num(o.studentLoanInterest), tuitionNew: tuitionThisYear.total, tuitionCarry: num(carry.tuitionProvincial), medicalExpenses: num(o.medicalExpenses), donations: donationsClaim, eligTaxable, nonTaxable }, L);
+  const provTax = quebec ? { tax: 0, refundable: 0, tuitionCarry: round2(tuitionThisYear.total + num(carry.tuitionProvincial)), warnings: [] as string[] } : computeProvince(prov, { taxableIncome, netIncome, age, hasSpouse, spouseNet: num(p.spouseNetIncome), cea, homeBuyer: o.homeBuyer, cppBase: round2(cppBase + seBaseHalf), ei: round2(eiAllowed), pension: t4a_016.total, disability: p.disabilityCertified, studentLoan: num(o.studentLoanInterest), tuitionNew: tuitionThisYear.total, tuitionCarry: num(carry.tuitionProvincial), medicalExpenses: num(o.medicalExpenses), donations: donationsClaim, eligTaxable, nonTaxable }, L);
   if (quebec) push({ line: "42800", form: "T1", label: "Provincial tax", value: 0, section: "provincial", always: true, explain: "Quebec residents file a separate provincial return (TP-1) with Revenu Québec; nothing goes on line 42800. This app computes the federal side only for Quebec.", note: "File the TP-1 with Revenu Québec." });
   else push({ line: "42800", form: "T1", label: `${prov.name} tax (from form ${prov.form})`, value: provTax.tax, section: "provincial", always: true, explain: `Carried from line ${prov.finalLine} of the ${prov.form}.` });
 
@@ -350,6 +350,8 @@ type ProvInputs = {
   age: number | null;
   hasSpouse: boolean;
   spouseNet: number;
+  cea: number;
+  homeBuyer: boolean;
   cppBase: number;
   ei: number;
   pension: number;
@@ -377,8 +379,15 @@ function computeProvince(r: ProvinceRules, i: ProvInputs, L: Line[]) {
   push({ line: "58040", label: `${r.name} basic personal amount`, value: bpa, always: true, explain: r.bpa.phaseStart !== undefined ? `${money(r.bpa.max)}, reduced above ${money(r.bpa.phaseStart)} of net income.` : `${money(r.bpa.max)} for everyone.` });
   const ageAmt = i.age !== null && i.age >= 65 ? round2(Math.max(0, r.age.amount - r.age.reductionRate * Math.max(0, i.netIncome - r.age.threshold))) : 0;
   if (ageAmt) push({ line: "58080", label: "Age amount", value: ageAmt, explain: `${money(r.age.amount)} at 65+, reduced by 15% of net income over ${money(r.age.threshold)}.` });
-  const spouse = i.hasSpouse ? round2(Math.max(0, r.spouseAmount - i.spouseNet)) : 0;
-  if (i.hasSpouse) push({ line: "58120", label: "Spouse or common-law partner amount", value: spouse, always: true, explain: `${money(r.spouseAmount)} minus your partner's net income.` });
+  const spouseCap = r.spouse.max ?? r.spouse.base;
+  const spouse = i.hasSpouse ? round2(Math.min(spouseCap, Math.max(0, r.spouse.base - Math.max(r.spouse.floor ?? 0, i.spouseNet)))) : 0;
+  if (i.hasSpouse) push({ line: "58120", label: "Spouse or common-law partner amount", value: spouse, always: true, from: [`Base ${money(r.spouse.base)} − partner's net income ${money(i.spouseNet)}${r.spouse.floor ? ` (at least ${money(r.spouse.floor)})` : ""}`, ...(r.spouse.max ? [`Maximum ${money(r.spouse.max)}`] : [])], explain: r.spouse.max ? `${money(r.spouse.base)} minus your partner's net income, but never more than ${money(r.spouse.max)} — the form's base and cap differ.` : `${money(r.spouse.base)} minus your partner's net income.` });
+  const seniorSupp = r.seniorSupplement && i.age !== null && i.age >= 65 ? r.seniorSupplement : 0;
+  if (seniorSupp) push({ line: "58220", label: `${r.name} senior supplementary amount`, value: seniorSupp, explain: `A flat ${money(r.seniorSupplement!)} for anyone 65 or older.` });
+  const provHomeBuyer = r.homeBuyersAmount && i.homeBuyer ? r.homeBuyersAmount : 0;
+  if (provHomeBuyer) push({ line: "58357", label: `${r.name} first-time home buyers' amount`, value: provHomeBuyer, explain: `${r.name}'s own home-buyers' credit, on top of the federal one.` });
+  const provCea = r.canadaEmploymentAmount ? i.cea : 0;
+  if (provCea) push({ line: "58310", label: "Canada employment amount", value: provCea, explain: "Same figure as federal line 31260." });
   if (i.cppBase) push({ line: "58240", label: "Base CPP contributions", value: i.cppBase, explain: "Same figure as the federal lines 30800 + 31000." });
   if (i.ei) push({ line: "58300", label: "EI premiums", value: i.ei, explain: "Same as federal line 31200." });
   const pension = i.age !== null && i.age >= 65 ? Math.min(r.pensionIncomeAmount, i.pension) : 0;
@@ -386,7 +395,7 @@ function computeProvince(r: ProvinceRules, i: ProvInputs, L: Line[]) {
   if (i.disability) push({ line: "58440", label: "Disability amount (self)", value: r.disabilityAmount, explain: "With an approved T2201." });
   if (i.studentLoan) push({ line: "58520", label: "Interest paid on student loans", value: round2(i.studentLoan), explain: "Same as federal line 31900." });
 
-  const before = bpa + ageAmt + spouse + i.cppBase + i.ei + pension + (i.disability ? r.disabilityAmount : 0) + i.studentLoan;
+  const before = bpa + ageAmt + spouse + seniorSupp + provHomeBuyer + provCea + i.cppBase + i.ei + pension + (i.disability ? r.disabilityAmount : 0) + i.studentLoan;
   const tuitionAvail = round2(i.tuitionNew + i.tuitionCarry);
   const tuitionNeeded = Math.max(0, round2(gross / r.creditRate - before));
   const tuitionUsed = round2(Math.min(tuitionAvail, tuitionNeeded));
@@ -405,17 +414,61 @@ function computeProvince(r: ProvinceRules, i: ProvInputs, L: Line[]) {
   push({ line: "61500", label: "Total non-refundable credits", value: nonRef, always: true, explain: "Line 58840 plus the donation credit." });
   let tax = round2(Math.max(0, gross - nonRef));
   const dtc = round2(i.eligTaxable * r.dividend.eligible + i.nonTaxable * r.dividend.nonEligible);
-  const dtcUsed = Math.min(dtc, tax);
-  if (dtc) push({ line: "61520", label: `${r.name} dividend tax credit`, value: dtcUsed, from: [`Eligible ${money(i.eligTaxable)} × ${pct(r.dividend.eligible)}`, `Non-eligible ${money(i.nonTaxable)} × ${pct(r.dividend.nonEligible)}`], explain: "The provincial half of the dividend credit." });
-  tax = round2(tax - dtcUsed);
+  const applyDtc = () => {
+    const dtcUsed = Math.min(dtc, tax);
+    if (dtc) push({ line: "61520", label: `${r.name} dividend tax credit`, value: dtcUsed, from: [`Eligible ${money(i.eligTaxable)} × ${pct(r.dividend.eligible)}`, `Non-eligible ${money(i.nonTaxable)} × ${pct(r.dividend.nonEligible)}`], explain: "The provincial half of the dividend credit." });
+    tax = round2(tax - dtcUsed);
+  };
+  if (!r.surtaxBeforeDividendCredit) applyDtc();
 
-  // Ontario extras
+  // Low-income tax reductions (BC, NB, NL): after credits and the dividend credit, floor 0.
+  if (r.lowIncome && tax > 0) {
+    const li = r.lowIncome;
+    let amount = 0;
+    const from: string[] = [];
+    let explain = "";
+    if (li.kind === "bc") {
+      amount = Math.max(0, round2(li.max - li.rate * Math.max(0, i.netIncome - li.threshold)));
+      from.push(`${money(li.max)} − ${pct(li.rate)} × (net income ${money(i.netIncome)} − ${money(li.threshold)})`);
+      explain = `${r.name}'s tax reduction credit: ${money(li.max)} for net income up to ${money(li.threshold)}, shrinking by ${pct(li.rate)} of income above it. Applied against tax, never refunded.`;
+    } else {
+      const family = i.hasSpouse;
+      const afi = round2(i.netIncome + (family ? i.spouseNet : 0));
+      const eligible = family ? (li.eligibleFamily === undefined || afi < li.eligibleFamily) : (li.eligibleSingle === undefined || i.netIncome < li.eligibleSingle);
+      if (eligible) {
+        const ageExtra = li.ageSelf && i.age !== null && i.age >= 65 ? li.ageSelf : 0;
+        const base = Math.min(li.maxTotal, li.basic + ageExtra + (family ? li.spouse : 0));
+        const threshold = family ? li.thresholdFamily : li.thresholdSingle;
+        amount = Math.max(0, round2(base - li.rate * Math.max(0, afi - threshold)));
+        from.push(`Basic ${money(li.basic)}${ageExtra ? ` + age ${money(ageExtra)}` : ""}${family ? ` + spouse ${money(li.spouse)}` : ""} = ${money(base)}`, `− ${pct(li.rate)} × (adjusted family income ${money(afi)} − ${money(threshold)})`);
+        explain = family
+          ? `${r.name}'s low-income tax reduction for a couple: one of you claims it, using both net incomes. If it exceeds your ${r.name} tax, the unused part can go on your partner's form.`
+          : `${r.name}'s low-income tax reduction: ${money(li.basic)}, shrinking by ${pct(li.rate)} of net income above ${money(threshold)}. An eligible dependant would add more — not modelled.`;
+      }
+    }
+    const used = Math.min(amount, tax);
+    if (used > 0) push({ line: li.line, label: `${r.name} low-income tax reduction`, value: used, from, explain });
+    tax = round2(tax - used);
+  }
+
+  // Ontario: surtax on tax after credits (before the dividend credit), then the dividend credit, then the tax reduction
   if (r.surtax) {
     const s1 = Math.max(0, tax - r.surtax[0].over) * r.surtax[0].rate;
     const s2 = Math.max(0, tax - r.surtax[1].over) * r.surtax[1].rate;
     const surtax = round2(s1 + s2);
-    if (surtax) push({ line: "62", label: "Ontario surtax", value: surtax, from: [`20% of tax over ${money(r.surtax[0].over)}`, `36% of tax over ${money(r.surtax[1].over)}`], explain: "A tax on the tax: it kicks in once basic Ontario tax passes the thresholds, which is why Ontario's real top rate is higher than its bracket rate." });
+    if (surtax) push({ line: "68", label: "Ontario surtax", value: surtax, from: [`20% of tax over ${money(r.surtax[0].over)}`, `36% of tax over ${money(r.surtax[1].over)}`], explain: "A tax on the tax: it kicks in once basic Ontario tax passes the thresholds, which is why Ontario's real top rate is higher than its bracket rate." });
     tax = round2(tax + surtax);
+  }
+  if (r.surtaxBeforeDividendCredit) applyDtc();
+  if (r.taxReduction && tax > 0) {
+    const reduction = round2(Math.max(0, 2 * r.taxReduction.basic - tax));
+    if (reduction) push({ line: r.taxReduction.line, label: `${r.name} tax reduction`, value: Math.min(reduction, tax), from: [`2 × ${money(r.taxReduction.basic)} − tax ${money(tax)}`], explain: `${r.name}'s tax reduction: twice the basic ${money(r.taxReduction.basic)} minus your tax; it wipes out small tax bills and fades to nothing at ${money(2 * r.taxReduction.basic)}. Dependent children add more — not modelled.` });
+    tax = round2(Math.max(0, tax - reduction));
+  }
+  if (r.ageTaxCredit && i.age !== null && i.age >= 65 && i.taxableIncome < r.ageTaxCredit.taxableBelow && tax > 0) {
+    const used = Math.min(r.ageTaxCredit.amount, tax);
+    push({ line: r.ageTaxCredit.line, label: `${r.name} age tax credit`, value: used, from: [`Age ${i.age}, taxable income ${money(i.taxableIncome)} < ${money(r.ageTaxCredit.taxableBelow)}`], explain: `${money(r.ageTaxCredit.amount)} off tax for seniors with taxable income under ${money(r.ageTaxCredit.taxableBelow)}.` });
+    tax = round2(tax - used);
   }
   if (r.healthPremium) {
     const hp = r.healthPremium(i.taxableIncome);

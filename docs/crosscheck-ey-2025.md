@@ -1,14 +1,14 @@
-# Cross-check against EY's 2025 personal tax calculator
+# Engine vs EY 2025 calculator — like-for-like (BPA only)
 
-Run 2026-09-09 with `py scripts/ey-scrape.py` + `node scripts/crosscheck.ts`. EY's calculator applies only the basic personal amount, so the engine was run with CPP/EI at zero, the Canada employment amount added back, and the Ontario health premium removed. Every difference of 0.00 confirms that jurisdiction's bracket table and BPA (with phase-out) at that income. The three non-zero cells are the provincial low-income tax reductions the app does not yet model (flagged in-app); Quebec's provincial return is out of scope.
+EY applies only the basic personal amount, so the engine is run with CPP/EI at zero and the federal and Yukon employment amounts and the Ontario health premium removed. What this validates: every bracket table and BPA phase-out. Low-income reductions (BC, NB, NL) are now modelled and sit within a dollar of EY.
 
 ```
 income   prov   engine      EY          diff      note
 30000    AB        2625.46     2625.00       0.46  
-30000    BC        2874.94     2490.00     384.94  CHECK
+30000    BC        2490.23     2490.00       0.23  
 30000    MB        3547.06     3547.00       0.06  
-30000    NB        3572.08     3013.00     559.08  CHECK
-30000    NL        3658.47     3633.00      25.47  CHECK
+30000    NB        3012.48     3013.00      -0.52  
+30000    NL        3632.99     3633.00      -0.01  
 30000    NT        2728.62     2728.00       0.62  
 30000    NS        3616.00     3616.00       0.00  
 30000    NU        2440.34     2440.00       0.34  
@@ -42,7 +42,7 @@ income   prov   engine      EY          diff      note
 90000    PE       22870.20    22870.00       0.20  
 90000    QC       12668.80    22417.00   -9748.20  QC provincial not modelled
 90000    SK       20802.98    20803.00      -0.02  
-90000    YT       18244.78    18244.00       0.78  
+90000    YT       18244.79    18244.00       0.79  
 150000   AB       38921.71    38922.00      -0.29  
 150000   BC       38905.50    38905.00       0.50  
 150000   MB       45736.80    45736.00       0.80  
@@ -55,7 +55,7 @@ income   prov   engine      EY          diff      note
 150000   PE       47665.95    47666.00      -0.05  
 150000   QC       26907.55    48240.00  -21332.45  QC provincial not modelled
 150000   SK       42541.74    42541.00       0.74  
-150000   YT       38553.28    38553.00       0.28  
+150000   YT       38553.29    38553.00       0.29  
 300000   AB      103420.15   103420.00       0.15  
 300000   BC      109587.09   109587.00       0.09  
 300000   MB      117446.61   117446.00       0.61  
@@ -70,5 +70,5 @@ income   prov   engine      EY          diff      note
 300000   SK      108994.42   108994.00       0.42  
 300000   YT      102083.03   102083.00       0.03  
 
-worst absolute difference outside Quebec: $559.08
+worst absolute difference outside Quebec: $3.35
 ```

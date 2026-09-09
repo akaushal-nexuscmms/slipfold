@@ -8,7 +8,7 @@
 import { readFileSync } from "node:fs";
 import { compute } from "../src/lib/engine.ts";
 import { EMPTY_PROFILE, emptyReturn, type TaxReturn } from "../src/lib/model.ts";
-import { CPP, FEDERAL, PROVINCE_LIST, type ProvinceCode } from "../src/lib/rules2025.ts";
+import { CPP, FEDERAL, PROVINCES, PROVINCE_LIST, type ProvinceCode } from "../src/lib/rules2025.ts";
 
 const ey = JSON.parse(readFileSync(process.argv[2], "utf8")) as Record<string, Record<string, { taxpay: number; marginal: string }>>;
 
@@ -32,8 +32,9 @@ for (const [incomeStr, byProv] of Object.entries(ey)) {
     const r = compute(employee(income, p.code));
     // total income tax = federal + provincial (+ Quebec: EY shows combined incl. Quebec provincial, which we do not model)
     const cea = r.lines.find((l) => l.line === "31260")?.value ?? 0;
+    const provCea = r.lines.find((l) => l.line === "58310")?.value ?? 0; // Yukon mirrors the federal CEA; EY ignores it
     const ohp = r.lines.find((l) => l.line === "89")?.value ?? 0;
-    const engine = Math.round((r.summary.federalTax + r.summary.provincialTax + cea * FEDERAL.creditRate - ohp) * 100) / 100;
+    const engine = Math.round((r.summary.federalTax + r.summary.provincialTax + cea * FEDERAL.creditRate + provCea * PROVINCES[p.code].creditRate - ohp) * 100) / 100;
     const diff = engine - e.taxpay;
     if (p.code !== "QC") worst = Math.max(worst, Math.abs(diff));
     const note = p.code === "QC" ? "QC provincial not modelled" : Math.abs(diff) > 5 ? "CHECK" : "";
