@@ -447,7 +447,7 @@ function computeProvince(r: ProvinceRules, i: ProvInputs, L: Line[]) {
       }
     }
     const used = Math.min(amount, tax);
-    if (used > 0) push({ line: li.line, label: `${r.name} low-income tax reduction`, value: used, from, explain });
+    if (used > 0) push({ line: li.line, label: li.kind === "bc" ? `${r.name} tax reduction` : `${r.name} low-income tax reduction`, value: used, from, explain }); // the BC form calls it "tax reduction"
     tax = round2(tax - used);
   }
 
