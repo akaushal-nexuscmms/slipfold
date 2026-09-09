@@ -4,6 +4,7 @@ import { compute, bpaFederal } from "../src/lib/engine.ts";
 import { EXAMPLE_RETURN, EMPTY_CARRY, EMPTY_OTHER, EMPTY_PROFILE, emptyReturn, type TaxReturn } from "../src/lib/model.ts";
 import { PROVINCES, PROVINCE_LIST, taxOn, FEDERAL } from "../src/lib/rules2025.ts";
 import { rollForward } from "../src/lib/store.ts";
+import { createVault, unlockVault, seal, open, isSealed } from "../src/lib/crypto.ts";
 
 let failures = 0;
 const eq = (name: string, got: unknown, want: unknown) => {
@@ -167,6 +168,22 @@ eq("rollForward: issuers kept, amounts cleared", next.slips.map((s) => [s.kind, 
 eq("rollForward: unused RRSP carried", next.carry.unusedRrspContributions, 3000);
 eq("rollForward: deduction limit reset (comes from NOA)", next.carry.rrspDeductionLimit, 0);
 eq("rollForward: tuition carried", rollForward(stu).carry.tuitionFederal, 3289.22);
+
+// ---------- encryption at rest ----------
+{
+  const { meta, key } = await createVault("correct horse battery staple");
+  const sealed = await seal(key, EXAMPLE_RETURN);
+  eq("crypto: sealed blob is recognised and carries no plaintext", [isSealed(sealed), JSON.stringify(sealed).includes("Prairie")], [true, false]);
+  const back = await open<TaxReturn>(key, sealed);
+  eq("crypto: round trip restores the return", back.slips[0].issuer, "Prairie Logistics Ltd.");
+  const again = await unlockVault("correct horse battery staple", meta);
+  eq("crypto: unlock with the right passphrase decrypts", (await open<TaxReturn>(again, sealed)).year, 2025);
+  let wrong = "";
+  try { await unlockVault("wrong", meta); } catch (e) { wrong = (e as Error).message; }
+  eq("crypto: wrong passphrase is rejected", wrong, "Wrong passphrase.");
+  const s2 = await seal(key, EXAMPLE_RETURN);
+  eq("crypto: fresh IV every time", s2.iv === sealed.iv, false);
+}
 
 console.log(failures ? `\n${failures} FAILED` : "\nall passed");
 process.exit(failures ? 1 : 0);

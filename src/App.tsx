@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { compute, type Line, type Section } from "./lib/engine";
 import { EXAMPLE_RETURN, SLIP_DEFS, emptyReturn, newSlip, num, type MaritalStatus, type Slip, type SlipKind, type TaxReturn } from "./lib/model";
 import { PROVINCES, PROVINCE_LIST, TAX_YEAR, type ProvinceCode } from "./lib/rules2025";
-import { deleteYear, exportJson, listYears, loadReturn, parseImport, rollForward, saveReturn } from "./lib/store";
+import { deleteYear, exportJson, getVaultMeta, isEncryptedBackup, listYears, loadReturn, parseImport, removePassphrase, rollForward, saveReturn, setPassphrase, unlock } from "./lib/store";
+import { forgetKey, recallKey, rememberKey, type VaultMeta } from "./lib/crypto";
 import { Caption, Card, CopyButton, Field, MoneyInput, Notice, btnGhost, btnIcon, btnPrimary, inputCls, money } from "./ui";
 
 type Tab = "profile" | "slips" | "other" | "carry" | "return" | "next" | "backup";
@@ -31,19 +32,36 @@ export default function App() {
   const [years, setYears] = useState<number[]>([]);
   const [tab, setTab] = useState<Tab>("profile");
   const [flash, setFlash] = useState<string | null>(null);
+  const [key, setKey] = useState<CryptoKey | null>(null);
+  const [vault, setVault] = useState<VaultMeta | null>(null);
+  const [locked, setLocked] = useState(false);
   const saveTimer = useRef<number | null>(null);
 
-  // hydrate: latest saved year, else a blank 2025 return
+  // hydrate: if a passphrase is set and this tab has not unlocked, show the lock screen;
+  // otherwise load the latest saved year, else a blank 2025 return
+  const hydrate = async (k: CryptoKey | null) => {
+    try {
+      const ys = await listYears();
+      setYears(ys);
+      const y = ys[0] ?? TAX_YEAR;
+      setRet((await loadReturn(y, k)) ?? emptyReturn(TAX_YEAR));
+    } catch {
+      setRet(emptyReturn(TAX_YEAR));
+    }
+  };
   useEffect(() => {
     (async () => {
-      try {
-        const ys = await listYears();
-        setYears(ys);
-        const y = ys[0] ?? TAX_YEAR;
-        setRet((await loadReturn(y)) ?? emptyReturn(TAX_YEAR));
-      } catch {
-        setRet(emptyReturn(TAX_YEAR));
-      }
+      const meta = await getVaultMeta().catch(() => null);
+      setVault(meta);
+      if (meta) {
+        const k = await recallKey();
+        if (!k) {
+          setLocked(true);
+          return;
+        }
+        setKey(k);
+        await hydrate(k);
+      } else await hydrate(null);
     })();
   }, []);
 
@@ -53,13 +71,13 @@ export default function App() {
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(async () => {
       try {
-        await saveReturn(ret);
+        await saveReturn(ret, key);
         setYears(await listYears());
       } catch {
         /* storage blocked */
       }
     }, 400);
-  }, [ret]);
+  }, [ret, key]);
 
   const result = useMemo(() => (ret ? compute(ret) : null), [ret]);
   const say = (m: string) => {
@@ -67,11 +85,23 @@ export default function App() {
     setTimeout(() => setFlash(null), 2500);
   };
 
+  if (locked)
+    return (
+      <LockScreen
+        onUnlock={async (pass) => {
+          const k = await unlock(pass);
+          await rememberKey(k);
+          setKey(k);
+          setLocked(false);
+          await hydrate(k);
+        }}
+      />
+    );
   if (!ret || !result) return <div className="p-6 text-sm text-ink-soft">Loading…</div>;
 
   const patch = (p: Partial<TaxReturn>) => setRet({ ...ret, ...p });
   const switchYear = async (y: number) => {
-    const r = await loadReturn(y);
+    const r = await loadReturn(y, key);
     if (r) {
       setRet(r);
       setTab("profile");
@@ -79,7 +109,7 @@ export default function App() {
   };
   const startNextYear = async () => {
     const next = rollForward(ret);
-    await saveReturn(next);
+    await saveReturn(next, key);
     setYears(await listYears());
     setRet(next);
     setTab("slips");
@@ -105,7 +135,20 @@ export default function App() {
                 ))}
               </select>
             </label>
-            <span className="hidden text-xs text-ink-soft sm:inline">Saved on this device only.</span>
+            <span className="hidden text-xs text-ink-soft sm:inline">{vault ? "Encrypted on this device." : "Saved on this device only."}</span>
+            {vault && (
+              <button
+                className={btnGhost}
+                onClick={() => {
+                  forgetKey();
+                  setKey(null);
+                  setRet(null);
+                  setLocked(true);
+                }}
+              >
+                Lock
+              </button>
+            )}
           </div>
         </div>
         <nav className="mx-auto flex max-w-6xl gap-1 overflow-x-auto px-4 pb-2">
@@ -134,12 +177,29 @@ export default function App() {
           <BackupTab
             ret={ret}
             years={years}
+            vault={vault}
+            cryptoKey={key}
+            onPassphrase={async (pass) => {
+              const k = await setPassphrase(pass, key);
+              await rememberKey(k);
+              setKey(k);
+              setVault(await getVaultMeta());
+              say(vault ? "Passphrase changed; every stored year was re-encrypted." : "Passphrase set; every stored year is now encrypted on this device.");
+            }}
+            onRemovePassphrase={async () => {
+              if (!key) return;
+              await removePassphrase(key);
+              forgetKey();
+              setKey(null);
+              setVault(null);
+              say("Passphrase removed; returns are stored in the clear again.");
+            }}
             onLoadExample={() => {
               setRet({ ...EXAMPLE_RETURN });
               say("Example loaded — a single Manitoba employee with an RRSP and a donation.");
             }}
             onImport={async (rs) => {
-              for (const r of rs) await saveReturn(r);
+              for (const r of rs) await saveReturn(r, key);
               setYears(await listYears());
               if (rs[0]) setRet(rs[0]);
               say(`Imported ${rs.length} return${rs.length === 1 ? "" : "s"}.`);
@@ -148,7 +208,7 @@ export default function App() {
               await deleteYear(y);
               const ys = await listYears();
               setYears(ys);
-              setRet(ys[0] ? (await loadReturn(ys[0]))! : emptyReturn(TAX_YEAR));
+              setRet(ys[0] ? (await loadReturn(ys[0], key))! : emptyReturn(TAX_YEAR));
               say(`${y} deleted.`);
             }}
           />
@@ -513,16 +573,41 @@ function NextTab({ lines, year, onStart }: { lines: Line[]; year: number; onStar
 
 // ---------------- Backup ----------------
 
-function BackupTab({ ret, years, onLoadExample, onImport, onDelete }: { ret: TaxReturn; years: number[]; onLoadExample: () => void; onImport: (rs: TaxReturn[]) => void; onDelete: (y: number) => void }) {
+function BackupTab({
+  ret,
+  years,
+  vault,
+  cryptoKey,
+  onPassphrase,
+  onRemovePassphrase,
+  onLoadExample,
+  onImport,
+  onDelete,
+}: {
+  ret: TaxReturn;
+  years: number[];
+  vault: VaultMeta | null;
+  cryptoKey: CryptoKey | null;
+  onPassphrase: (pass: string) => Promise<void>;
+  onRemovePassphrase: () => Promise<void>;
+  onLoadExample: () => void;
+  onImport: (rs: TaxReturn[]) => void;
+  onDelete: (y: number) => void;
+}) {
   const [err, setErr] = useState<string | null>(null);
+  const [pass1, setPass1] = useState("");
+  const [pass2, setPass2] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [pendingImport, setPendingImport] = useState<string | null>(null);
+  const [importPass, setImportPass] = useState("");
   const exportAll = async () => {
     const all: TaxReturn[] = [];
     for (const y of years) {
-      const r = await loadReturn(y);
+      const r = await loadReturn(y, cryptoKey);
       if (r) all.push(r);
     }
     if (!all.length) all.push(ret);
-    const blob = new Blob([exportJson(all)], { type: "application/json" });
+    const blob = new Blob([await exportJson(all, cryptoKey, vault)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -531,9 +616,53 @@ function BackupTab({ ret, years, onLoadExample, onImport, onDelete }: { ret: Tax
     URL.revokeObjectURL(url);
   };
   return (
-    <Card title="Backup, restore, example">
+    <>
+      <Card title={vault ? "Passphrase — set" : "Passphrase — not set"}>
+        <p className="mb-3 text-sm text-ink-soft">
+          {vault
+            ? "Every stored year is encrypted with a key derived from your passphrase (PBKDF2, AES-256-GCM). Closing the tab locks it. There is no recovery: a forgotten passphrase means the data is gone, so export a backup you can read."
+            : "Without a passphrase your returns sit in the browser's storage in the clear — anyone with this profile on this computer can read them, including a SIN. Set one before you type real numbers."}
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label={vault ? "New passphrase" : "Passphrase"} help="A sentence you will remember beats eight random characters. Minimum 8.">
+            <input className={inputCls} type="password" autoComplete="new-password" value={pass1} onChange={(e) => setPass1(e.target.value)} />
+          </Field>
+          <Field label="Repeat it">
+            <input className={inputCls} type="password" autoComplete="new-password" value={pass2} onChange={(e) => setPass2(e.target.value)} />
+          </Field>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            className={btnPrimary}
+            disabled={busy || pass1.length < 8 || pass1 !== pass2}
+            onClick={async () => {
+              setBusy(true);
+              try {
+                await onPassphrase(pass1);
+                setPass1("");
+                setPass2("");
+                setErr(null);
+              } catch (x) {
+                setErr(x instanceof Error ? x.message : "Could not set the passphrase.");
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {busy ? "Encrypting…" : vault ? "Change passphrase" : "Set passphrase and encrypt"}
+          </button>
+          {vault && (
+            <button className={`${btnGhost} text-danger`} onClick={() => confirm("Store your returns unencrypted again?") && onRemovePassphrase()}>
+              Remove passphrase
+            </button>
+          )}
+          {pass1 && pass1 !== pass2 && <span className="self-center text-xs text-warn">The two entries differ.</span>}
+        </div>
+      </Card>
+      <Card title="Backup, restore, example">
       <p className="mb-3 text-sm text-ink-soft">
-        Your returns live in this browser's storage and nowhere else. Export a file before clearing the browser or switching devices; the file contains everything you typed, including your SIN if you entered one — keep it somewhere private.
+        Your returns live in this browser's storage and nowhere else. Export a file before clearing the browser or switching devices.{" "}
+        {vault ? "With a passphrase set, the file is encrypted with it; you will need the same passphrase to import it." : "Without a passphrase the file is plain text and contains everything you typed, including your SIN if you entered one — keep it somewhere private."}
       </p>
       <div className="flex flex-wrap gap-2">
         <button className={btnPrimary} onClick={exportAll}>
@@ -548,8 +677,15 @@ function BackupTab({ ret, years, onLoadExample, onImport, onDelete }: { ret: Tax
             onChange={async (e) => {
               const f = e.target.files?.[0];
               if (!f) return;
+              const text = await f.text();
+              e.target.value = "";
+              if (isEncryptedBackup(text)) {
+                setPendingImport(text);
+                setErr(null);
+                return;
+              }
               try {
-                onImport(parseImport(await f.text()));
+                onImport(await parseImport(text));
                 setErr(null);
               } catch (x) {
                 setErr(x instanceof Error ? x.message : "Could not read that file.");
@@ -564,8 +700,74 @@ function BackupTab({ ret, years, onLoadExample, onImport, onDelete }: { ret: Tax
           Delete {ret.year}
         </button>
       </div>
+      {pendingImport && (
+        <div className="mt-3 flex flex-wrap items-end gap-2 rounded-lg border border-rule bg-surface p-3">
+          <Field label="This backup is encrypted — passphrase it was exported with" className="min-w-64 flex-1">
+            <input className={inputCls} type="password" value={importPass} onChange={(e) => setImportPass(e.target.value)} />
+          </Field>
+          <button
+            className={btnPrimary}
+            onClick={async () => {
+              try {
+                onImport(await parseImport(pendingImport, importPass));
+                setPendingImport(null);
+                setImportPass("");
+                setErr(null);
+              } catch (x) {
+                setErr(x instanceof Error ? x.message : "Could not read that file.");
+              }
+            }}
+          >
+            Import
+          </button>
+          <button className={btnGhost} onClick={() => setPendingImport(null)}>
+            Cancel
+          </button>
+        </div>
+      )}
       {err && <p className="mt-2 text-sm text-danger">{err}</p>}
       <p className="mt-3 text-xs text-ink-soft">Years on this device: {years.length ? years.join(", ") : "none saved yet"}.</p>
-    </Card>
+      </Card>
+    </>
+  );
+}
+
+function LockScreen({ onUnlock }: { onUnlock: (pass: string) => Promise<void> }) {
+  const [pass, setPass] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const go = async () => {
+    setBusy(true);
+    try {
+      await onUnlock(pass);
+    } catch (x) {
+      setErr(x instanceof Error ? x.message : "Could not unlock.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-paper p-4 text-ink">
+      <div className="w-full max-w-sm rounded-xl border border-rule bg-surface-raised p-5 shadow-sm">
+        <Caption tone="accent">T1 Field Guide</Caption>
+        <h1 className="mt-1 text-lg font-semibold">Unlock your returns</h1>
+        <p className="mt-1 text-sm text-ink-soft">They are encrypted on this device with your passphrase. Nothing was sent anywhere.</p>
+        <input
+          className={`${inputCls} mt-3`}
+          type="password"
+          autoFocus
+          autoComplete="current-password"
+          placeholder="Passphrase"
+          value={pass}
+          onChange={(e) => setPass(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && pass && go()}
+        />
+        {err && <p className="mt-2 text-sm text-danger">{err}</p>}
+        <button className={`${btnPrimary} mt-3 w-full`} disabled={busy || !pass} onClick={go}>
+          {busy ? "Unlocking…" : "Unlock"}
+        </button>
+        <p className="mt-3 text-xs text-ink-soft">Forgot it? There is no reset — the data cannot be recovered without the passphrase. You can clear this site's storage in the browser and start again, or import a backup.</p>
+      </div>
+    </div>
   );
 }

@@ -111,6 +111,50 @@ with sync_playwright() as p:
     mf = page.evaluate("fetch('/manifest.webmanifest').then(r => r.status)")
     check("pwa: manifest served", mf == 200, str(mf))
 
+    # ---------- encryption at rest ----------
+    page.get_by_role("button", name="Backup").click(); page.wait_for_timeout(200)
+    body = page.inner_text("body")
+    check("vault: passphrase not set by default, warning shown", "not set" in body.lower() and "in the clear" in body)
+    pw = page.locator("input[type=password]")
+    pw.nth(0).fill("correct horse battery staple"); pw.nth(1).fill("correct horse battery staple"); page.wait_for_timeout(100)
+    page.get_by_role("button", name="Set passphrase and encrypt").click(); page.wait_for_timeout(2500)
+    body = page.inner_text("body")
+    check("vault: passphrase set, rows re-encrypted", "now encrypted" in body and "passphrase — set" in body.lower())
+    check("vault: header says encrypted + Lock button", "Encrypted on this device" in page.inner_text("header") and page.get_by_role("button", name="Lock").count() == 1)
+    # stored rows are sealed: no plaintext issuer in IndexedDB
+    sealed = page.evaluate("""() => new Promise(res => { const r = indexedDB.open('t1-fieldguide'); r.onsuccess = () => { const db = r.result; const tx = db.transaction('returns'); const all = tx.objectStore('returns').getAll(); all.onsuccess = () => res(JSON.stringify(all.result)); }; })""")
+    check("vault: IndexedDB rows contain no plaintext (issuer, SIN)", "Prairie" not in sealed and '"enc":true' in sealed, sealed[:120])
+    # encrypted export
+    with page.expect_download(timeout=15000) as dl:
+        page.get_by_role("button", name=re.compile(r"Export all years")).click()
+    d = dl.value; encpath = f"{OUT}/{d.suggested_filename}"; d.save_as(encpath)
+    enc = open(encpath, encoding="utf-8").read()
+    check("vault: export is encrypted, no plaintext", '"encrypted": true' in enc and "Prairie" not in enc)
+    # lock → reload → lock screen; wrong passphrase rejected; right one restores
+    page.get_by_role("button", name="Lock").click(); page.wait_for_timeout(300)
+    check("vault: lock shows the unlock screen", "Unlock your returns" in page.inner_text("body"))
+    page.reload(); page.wait_for_load_state("networkidle"); page.wait_for_timeout(600)
+    check("vault: reload after lock still locked", "Unlock your returns" in page.inner_text("body"))
+    page.locator("input[type=password]").fill("nope"); page.get_by_role("button", name="Unlock").click(); page.wait_for_timeout(1500)
+    check("vault: wrong passphrase rejected", "Wrong passphrase" in page.inner_text("body"))
+    page.locator("input[type=password]").fill("correct horse battery staple"); page.get_by_role("button", name="Unlock").click(); page.wait_for_timeout(2500)
+    check("vault: right passphrase restores the data", "Sam" in page.locator("input").first.input_value())
+    page.reload(); page.wait_for_load_state("networkidle"); page.wait_for_timeout(800)
+    check("vault: reload within the tab does not re-prompt (session key)", "Sam" in page.locator("input").first.input_value())
+    # import the encrypted backup back in
+    page.get_by_role("button", name="Backup").click(); page.wait_for_timeout(200)
+    page.locator("input[type=file]").set_input_files(encpath); page.wait_for_timeout(400)
+    check("vault: encrypted import asks for the passphrase", "This backup is encrypted" in page.inner_text("body"))
+    page.locator("input[type=password]").last.fill("wrong"); page.get_by_role("button", name="Import", exact=True).click(); page.wait_for_timeout(1500)
+    check("vault: import with wrong passphrase rejected", "Wrong passphrase for this backup" in page.inner_text("body"))
+    page.locator("input[type=password]").last.fill("correct horse battery staple"); page.get_by_role("button", name="Import", exact=True).click(); page.wait_for_timeout(2000)
+    check("vault: import with right passphrase succeeds", "Imported 2 returns" in page.inner_text("body"))
+    # remove passphrase → rows plain again
+    page.on("dialog", lambda dlg: dlg.accept())
+    page.get_by_role("button", name="Remove passphrase").click(); page.wait_for_timeout(1500)
+    plain = page.evaluate("""() => new Promise(res => { const r = indexedDB.open('t1-fieldguide'); r.onsuccess = () => { const db = r.result; const tx = db.transaction('returns'); const all = tx.objectStore('returns').getAll(); all.onsuccess = () => res(JSON.stringify(all.result)); }; })""")
+    check("vault: remove passphrase stores rows in the clear again", "Prairie" in plain and '"enc":true' not in plain)
+
     # dark + mobile
     dctx = browser.new_context(viewport={"width": 1400, "height": 1000}, color_scheme="dark")
     dpage = dctx.new_page(); dpage.goto(ROOT + "/"); dpage.wait_for_load_state("networkidle"); dpage.wait_for_timeout(400)

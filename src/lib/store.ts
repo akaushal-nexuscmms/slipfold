@@ -1,10 +1,12 @@
-// Persistence: one row per tax year in IndexedDB (Dexie), plus a tiny settings row.
-// Everything stays on the device. Export/import moves a JSON file the user controls.
+// Persistence: one row per tax year in IndexedDB (Dexie), optionally sealed with a passphrase.
+// Everything stays on the device. Export/import moves a JSON file the user controls — sealed
+// with the same passphrase when one is set.
 import Dexie, { type EntityTable } from "dexie";
 import { EMPTY_CARRY, EMPTY_OTHER, EMPTY_PROFILE, emptyReturn, newId, type Slip, type TaxReturn } from "./model.ts";
 import { compute } from "./engine.ts";
+import { createVault, deriveKey, isSealed, open, seal, unlockVault, type Sealed, type VaultMeta } from "./crypto.ts";
 
-type ReturnRow = { year: number; data: TaxReturn; updated: string };
+type ReturnRow = { year: number; data: TaxReturn | Sealed; updated: string };
 type SettingRow = { key: string; value: string };
 
 class Db extends Dexie {
@@ -17,16 +19,63 @@ class Db extends Dexie {
 }
 
 export const db = new Db();
+export type Key = CryptoKey | null;
 
-export async function loadReturn(year: number): Promise<TaxReturn | null> {
-  const row = await db.returns.get(year);
-  if (!row) return null;
-  // tolerate rows saved by an older build: fill any field added since
-  return { ...emptyReturn(year), ...row.data, profile: { ...EMPTY_PROFILE, ...row.data.profile }, other: { ...EMPTY_OTHER, ...row.data.other }, carry: { ...EMPTY_CARRY, ...row.data.carry } };
+const normalise = (year: number, d: TaxReturn): TaxReturn => ({ ...emptyReturn(year), ...d, profile: { ...EMPTY_PROFILE, ...d.profile }, other: { ...EMPTY_OTHER, ...d.other }, carry: { ...EMPTY_CARRY, ...d.carry } });
+
+async function readRow(row: ReturnRow, key: Key): Promise<TaxReturn> {
+  if (isSealed(row.data)) {
+    if (!key) throw new Error("locked");
+    return normalise(row.year, await open<TaxReturn>(key, row.data));
+  }
+  return normalise(row.year, row.data);
 }
 
-export async function saveReturn(r: TaxReturn): Promise<void> {
-  await db.returns.put({ year: r.year, data: r, updated: new Date().toISOString() });
+// ---------- vault (passphrase) ----------
+
+export async function getVaultMeta(): Promise<VaultMeta | null> {
+  const row = await db.settings.get("vault");
+  return row ? (JSON.parse(row.value) as VaultMeta) : null;
+}
+
+export async function unlock(passphrase: string): Promise<CryptoKey> {
+  const meta = await getVaultMeta();
+  if (!meta) throw new Error("No passphrase is set.");
+  return unlockVault(passphrase, meta);
+}
+
+/** Set (or change) the passphrase: every stored return is re-sealed with the new key. */
+export async function setPassphrase(passphrase: string, currentKey: Key): Promise<CryptoKey> {
+  const { meta, key } = await createVault(passphrase);
+  const rows = await db.returns.toArray();
+  const plain = await Promise.all(rows.map((r) => readRow(r, currentKey)));
+  await db.transaction("rw", db.returns, db.settings, async () => {
+    for (let i = 0; i < rows.length; i++) await db.returns.put({ year: rows[i].year, data: await seal(key, plain[i]), updated: rows[i].updated });
+    await db.settings.put({ key: "vault", value: JSON.stringify(meta) });
+  });
+  return key;
+}
+
+/** Remove the passphrase: every return is stored in the clear again. */
+export async function removePassphrase(key: CryptoKey): Promise<void> {
+  const rows = await db.returns.toArray();
+  const plain = await Promise.all(rows.map((r) => readRow(r, key)));
+  await db.transaction("rw", db.returns, db.settings, async () => {
+    for (let i = 0; i < rows.length; i++) await db.returns.put({ year: rows[i].year, data: plain[i], updated: rows[i].updated });
+    await db.settings.delete("vault");
+  });
+}
+
+// ---------- returns ----------
+
+export async function loadReturn(year: number, key: Key): Promise<TaxReturn | null> {
+  const row = await db.returns.get(year);
+  return row ? readRow(row, key) : null;
+}
+
+export async function saveReturn(r: TaxReturn, key: Key): Promise<void> {
+  const data = key ? await seal(key, r) : r;
+  await db.returns.put({ year: r.year, data, updated: new Date().toISOString() });
 }
 
 export async function listYears(): Promise<number[]> {
@@ -71,12 +120,45 @@ export function rollForward(from: TaxReturn): TaxReturn {
   };
 }
 
-export function exportJson(returns: TaxReturn[]): string {
-  return JSON.stringify({ app: "t1-fieldguide", version: 1, exported: new Date().toISOString(), returns }, null, 2);
+// ---------- backup files ----------
+
+type ExportFile =
+  | { app: "t1-fieldguide"; version: 1; exported: string; returns: TaxReturn[] }
+  | { app: "t1-fieldguide"; version: 2; exported: string; encrypted: true; salt: string; iterations: number; payload: Sealed };
+
+/** Plain JSON when there is no passphrase; sealed with the vault's key (and its salt, so import can derive it) when there is. */
+export async function exportJson(returns: TaxReturn[], key: Key, meta: VaultMeta | null): Promise<string> {
+  if (key && meta) {
+    const payload = await seal(key, returns);
+    const file: ExportFile = { app: "t1-fieldguide", version: 2, exported: new Date().toISOString(), encrypted: true, salt: meta.salt, iterations: meta.iterations, payload };
+    return JSON.stringify(file, null, 2);
+  }
+  const file: ExportFile = { app: "t1-fieldguide", version: 1, exported: new Date().toISOString(), returns };
+  return JSON.stringify(file, null, 2);
 }
 
-export function parseImport(text: string): TaxReturn[] {
-  const j = JSON.parse(text);
-  if (!j || j.app !== "t1-fieldguide" || !Array.isArray(j.returns)) throw new Error("Not a T1 Field Guide export file.");
-  return j.returns as TaxReturn[];
+export function isEncryptedBackup(text: string): boolean {
+  try {
+    const j = JSON.parse(text) as Partial<ExportFile>;
+    return j.app === "t1-fieldguide" && (j as { encrypted?: boolean }).encrypted === true;
+  } catch {
+    return false;
+  }
+}
+
+export async function parseImport(text: string, passphrase?: string): Promise<TaxReturn[]> {
+  const j = JSON.parse(text) as ExportFile;
+  if (!j || j.app !== "t1-fieldguide") throw new Error("Not a T1 Field Guide backup file.");
+  if ("encrypted" in j && j.encrypted) {
+    if (!passphrase) throw new Error("This backup is encrypted — enter the passphrase it was exported with.");
+    const key = await deriveKey(passphrase, Uint8Array.from(atob(j.salt), (c) => c.charCodeAt(0)), j.iterations);
+    try {
+      return (await open<TaxReturn[]>(key, j.payload)).map((r) => normalise(r.year, r));
+    } catch {
+      throw new Error("Wrong passphrase for this backup.");
+    }
+  }
+  const plain = j as Extract<ExportFile, { version: 1 }>;
+  if (!Array.isArray(plain.returns)) throw new Error("Not a T1 Field Guide backup file.");
+  return plain.returns.map((r) => normalise(r.year, r));
 }

@@ -1,0 +1,272 @@
+{
+ "30000": {
+  "BC": {
+   "taxpay": 2490.0,
+   "marginal": "23.12%"
+  },
+  "AB": {
+   "taxpay": 2625.0,
+   "marginal": "22.50%"
+  },
+  "SK": {
+   "taxpay": 3114.0,
+   "marginal": "25.00%"
+  },
+  "MB": {
+   "taxpay": 3547.0,
+   "marginal": "25.30%"
+  },
+  "ON": {
+   "taxpay": 2882.0,
+   "marginal": "19.55%"
+  },
+  "QC": {
+   "taxpay": 3280.0,
+   "marginal": "26.11%"
+  },
+  "NB": {
+   "taxpay": 3013.0,
+   "marginal": "26.90%"
+  },
+  "NS": {
+   "taxpay": 3616.0,
+   "marginal": "23.29%"
+  },
+  "PE": {
+   "taxpay": 3470.0,
+   "marginal": "24.00%"
+  },
+  "NF": {
+   "taxpay": 3633.0,
+   "marginal": "39.20%"
+  },
+  "NT": {
+   "taxpay": 2728.0,
+   "marginal": "20.40%"
+  },
+  "YK": {
+   "taxpay": 2899.0,
+   "marginal": "20.90%"
+  },
+  "NU": {
+   "taxpay": 2440.0,
+   "marginal": "18.50%"
+  }
+ },
+ "60000": {
+  "BC": {
+   "taxpay": 9183.0,
+   "marginal": "28.20%"
+  },
+  "AB": {
+   "taxpay": 9533.0,
+   "marginal": "28.50%"
+  },
+  "SK": {
+   "taxpay": 10903.0,
+   "marginal": "33.00%"
+  },
+  "MB": {
+   "taxpay": 11547.0,
+   "marginal": "33.25%"
+  },
+  "ON": {
+   "taxpay": 9196.0,
+   "marginal": "29.65%"
+  },
+  "QC": {
+   "taxpay": 11581.0,
+   "marginal": "36.12%"
+  },
+  "NB": {
+   "taxpay": 11299.0,
+   "marginal": "34.50%"
+  },
+  "NS": {
+   "taxpay": 12577.0,
+   "marginal": "35.45%"
+  },
+  "PE": {
+   "taxpay": 11885.0,
+   "marginal": "33.97%"
+  },
+  "NF": {
+   "taxpay": 11692.0,
+   "marginal": "35.00%"
+  },
+  "NT": {
+   "taxpay": 9223.0,
+   "marginal": "29.10%"
+  },
+  "YK": {
+   "taxpay": 9394.0,
+   "marginal": "29.50%"
+  },
+  "NU": {
+   "taxpay": 8307.0,
+   "marginal": "27.50%"
+  }
+ },
+ "90000": {
+  "BC": {
+   "taxpay": 17643.0,
+   "marginal": "28.20%"
+  },
+  "AB": {
+   "taxpay": 18683.0,
+   "marginal": "30.50%"
+  },
+  "SK": {
+   "taxpay": 20803.0,
+   "marginal": "33.00%"
+  },
+  "MB": {
+   "taxpay": 21522.0,
+   "marginal": "33.25%"
+  },
+  "ON": {
+   "taxpay": 18091.0,
+   "marginal": "29.65%"
+  },
+  "QC": {
+   "taxpay": 22417.0,
+   "marginal": "36.12%"
+  },
+  "NB": {
+   "taxpay": 21649.0,
+   "marginal": "34.50%"
+  },
+  "NS": {
+   "taxpay": 23710.0,
+   "marginal": "37.17%"
+  },
+  "PE": {
+   "taxpay": 22870.0,
+   "marginal": "37.10%"
+  },
+  "NF": {
+   "taxpay": 22214.0,
+   "marginal": "36.30%"
+  },
+  "NT": {
+   "taxpay": 17953.0,
+   "marginal": "29.10%"
+  },
+  "YK": {
+   "taxpay": 18244.0,
+   "marginal": "29.50%"
+  },
+  "NU": {
+   "taxpay": 16557.0,
+   "marginal": "27.50%"
+  }
+ },
+ "150000": {
+  "BC": {
+   "taxpay": 38905.0,
+   "marginal": "40.70%"
+  },
+  "AB": {
+   "taxpay": 38922.0,
+   "marginal": "36.00%"
+  },
+  "SK": {
+   "taxpay": 42541.0,
+   "marginal": "38.50%"
+  },
+  "MB": {
+   "taxpay": 45736.0,
+   "marginal": "43.40%"
+  },
+  "ON": {
+   "taxpay": 41545.0,
+   "marginal": "43.41%"
+  },
+  "QC": {
+   "taxpay": 48240.0,
+   "marginal": "47.46%"
+  },
+  "NB": {
+   "taxpay": 45236.0,
+   "marginal": "42.00%"
+  },
+  "NS": {
+   "taxpay": 48400.0,
+   "marginal": "43.50%"
+  },
+  "PE": {
+   "taxpay": 47666.0,
+   "marginal": "45.00%"
+  },
+  "NF": {
+   "taxpay": 45932.0,
+   "marginal": "41.80%"
+  },
+  "NT": {
+   "taxpay": 39010.0,
+   "marginal": "38.20%"
+  },
+  "YK": {
+   "taxpay": 38553.0,
+   "marginal": "36.90%"
+  },
+  "NU": {
+   "taxpay": 35807.0,
+   "marginal": "35.00%"
+  }
+ },
+ "300000": {
+  "BC": {
+   "taxpay": 109587.0,
+   "marginal": "53.50%"
+  },
+  "AB": {
+   "taxpay": 103420.0,
+   "marginal": "47.00%"
+  },
+  "SK": {
+   "taxpay": 108994.0,
+   "marginal": "47.50%"
+  },
+  "MB": {
+   "taxpay": 117446.0,
+   "marginal": "51.25%"
+  },
+  "ON": {
+   "taxpay": 116006.0,
+   "marginal": "53.53%"
+  },
+  "QC": {
+   "taxpay": 124240.0,
+   "marginal": "53.31%"
+  },
+  "NB": {
+   "taxpay": 117841.0,
+   "marginal": "52.50%"
+  },
+  "NS": {
+   "taxpay": 124499.0,
+   "marginal": "54.00%"
+  },
+  "PE": {
+   "taxpay": 120923.0,
+   "marginal": "52.00%"
+  },
+  "NF": {
+   "taxpay": 118993.0,
+   "marginal": "53.80%"
+  },
+  "NT": {
+   "taxpay": 104491.0,
+   "marginal": "47.05%"
+  },
+  "YK": {
+   "taxpay": 102083.0,
+   "marginal": "45.80%"
+  },
+  "NU": {
+   "taxpay": 97117.0,
+   "marginal": "44.50%"
+  }
+ }
+}
