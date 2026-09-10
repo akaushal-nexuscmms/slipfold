@@ -140,7 +140,8 @@ with sync_playwright() as p:
         check("pdf: MB428 carries the BPA", "15780.00" in doc[9].get_text())
         check("pdf: T776 carries the net rental income", "5765.24" in doc[13].get_text())
         check("pdf: checklist names Schedule 7 and signing", "Schedule 7" in doc[0].get_text() and "Sign" in doc[0].get_text())
-        check("pdf: status line reports fields filled", "fields filled" in page.inner_text("body"))
+        mfill = re.search(r"(\d+) fields filled", page.inner_text("body"))
+        check("pdf: status line reports many fields filled", bool(mfill) and int(mfill.group(1)) > 60, mfill.group(0) if mfill else "no status")
     # remove the property again so later checks see the original example
     page.get_by_role("button", name=re.compile(r"3 · Rental")).click(); page.wait_for_timeout(200)
     page.get_by_role("button", name="Remove property").click(); page.wait_for_timeout(300)

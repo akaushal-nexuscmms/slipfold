@@ -7,7 +7,7 @@
 //
 // Two layers: `fieldValues()` is pure and testable in Node; `buildReturnPdf()` needs the PDFs.
 
-import { PDFDocument, PDFName, StandardFonts, rgb, type PDFForm } from "pdf-lib";
+import { PDFCheckBox, PDFDocument, PDFDropdown, PDFName, PDFTextField, StandardFonts, rgb, type PDFForm } from "pdf-lib";
 import type { Result } from "./engine.ts";
 import { rental } from "./engine.ts";
 import { RENTAL_EXPENSES, type TaxReturn } from "./model.ts";
@@ -228,9 +228,9 @@ function setBySuffix(form: PDFForm, values: FormValues, filled: string[], missin
     if (!name) { missing.push(suffix); continue; }
     try {
       const f = form.getField(name);
-      const kind = f.constructor.name;
-      if (kind === "PDFTextField") { form.getTextField(name).setText(value); filled.push(suffix); }
-      else if (kind === "PDFDropdown") { const dd = form.getDropdown(name); const opt = dd.getOptions().find((o) => o.toUpperCase() === value.toUpperCase() || o.toUpperCase().startsWith(value.toUpperCase())); if (opt) { dd.select(opt); filled.push(suffix); } else missing.push(suffix); }
+      // instanceof, never constructor.name: the production build minifies class names
+      if (f instanceof PDFTextField) { f.setText(value); filled.push(suffix); }
+      else if (f instanceof PDFDropdown) { const opt = f.getOptions().find((o) => o.toUpperCase() === value.toUpperCase() || o.toUpperCase().startsWith(value.toUpperCase())); if (opt) { f.select(opt); filled.push(suffix); } else missing.push(suffix); }
       else missing.push(suffix);
     } catch { missing.push(suffix); }
   }
@@ -241,7 +241,8 @@ function checkBySuffix(form: PDFForm, suffixes: string[], filled: string[], miss
   for (const suffix of suffixes) {
     const name = names.find((n) => n.endsWith(suffix));
     if (!name) { missing.push(suffix); continue; }
-    try { form.getCheckBox(name).check(); filled.push(suffix); } catch { missing.push(suffix); }
+    const f = form.getField(name);
+    if (f instanceof PDFCheckBox) { f.check(); filled.push(suffix); } else missing.push(suffix);
   }
 }
 
