@@ -185,10 +185,43 @@ export type Carryforwards = {
   netCapitalLosses: number; // net capital losses of other years, at 50% inclusion (NOA)
 };
 
+/** One rental property — form T776. Recurring: address, share, personal-use split, UCC. */
+export type RentalProperty = {
+  id: string;
+  address: string;
+  ownershipShare: number; // your percentage, 100 if sole owner
+  personalUsePct: number; // % of the property you use yourself (renting a basement suite: the rest of the house)
+  grossRents: number; // line 8141
+  otherIncome: number; // line 8230 — laundry, parking, storage
+  expenses: Record<string, number>; // keyed by RENTAL_EXPENSES key
+  ucc: number; // undepreciated capital cost of the building(s), start of year (Class 1)
+  additions: number; // capital additions this year (building cost, not land; renovations that are capital)
+  ccaClaim: number | null; // null = claim the maximum allowed
+};
+
+export const RENTAL_EXPENSES: BoxDef[] = [
+  { key: "advertising", box: "8521", label: "Advertising", help: "Listing fees, signs, online ads to find tenants." },
+  { key: "insurance", box: "8690", label: "Insurance", help: "Premiums for the rental property for the year. Prepaid premiums for later years go in those years." },
+  { key: "interest", box: "8710", label: "Interest and bank charges", help: "Mortgage interest only — never the principal. Also fees to arrange the mortgage and bank charges on the rental account." },
+  { key: "office", box: "8810", label: "Office expenses", help: "Stationery, postage, small items. Not furniture or computers (those are capital)." },
+  { key: "professional", box: "8860", label: "Professional fees", help: "Accounting for the rental, legal fees for leases or collecting rent. Not legal fees to buy the property (capital)." },
+  { key: "management", box: "8871", label: "Management and administration", help: "Property manager, condo fees you pay as owner, tenant screening." },
+  { key: "repairs", box: "8960", label: "Repairs and maintenance", help: "Fixing things to their original state: paint, a broken appliance repair, plumbing. A new roof, a new kitchen or an addition is capital — put it in additions." },
+  { key: "salaries", box: "9060", label: "Salaries, wages and benefits", help: "Paid to a caretaker or superintendent, including CPP/EI you paid as employer." },
+  { key: "propertyTax", box: "9180", label: "Property taxes", help: "Municipal and school taxes on the rental property for the year." },
+  { key: "travel", box: "9200", label: "Travel", help: "To collect rent or supervise repairs, only if the property is out of your area and you have receipts. Not for a property in your own city." },
+  { key: "utilities", box: "9220", label: "Utilities", help: "Heat, electricity, water, internet you pay for the tenant." },
+  { key: "vehicle", box: "9281", label: "Motor vehicle expenses", help: "Only for driving to the property for repairs or supervision when you own one property in your area and do the work yourself; keep a log." },
+  { key: "other", box: "9270", label: "Other expenses", help: "Lease cancellation, landscaping, snow removal, anything deductible with no line of its own." },
+];
+
+export const CCA_CLASS1_RATE = 0.04; // T4036: Class 1 buildings, declining balance
+
 export type TaxReturn = {
   year: number;
   profile: Profile;
   slips: Slip[];
+  rentals: RentalProperty[];
   other: Other;
   carry: Carryforwards;
 };
@@ -237,7 +270,11 @@ export const EMPTY_CARRY: Carryforwards = {
 };
 
 export function emptyReturn(year: number): TaxReturn {
-  return { year, profile: { ...EMPTY_PROFILE }, slips: [], other: { ...EMPTY_OTHER }, carry: { ...EMPTY_CARRY } };
+  return { year, profile: { ...EMPTY_PROFILE }, slips: [], rentals: [], other: { ...EMPTY_OTHER }, carry: { ...EMPTY_CARRY } };
+}
+
+export function newRental(): RentalProperty {
+  return { id: newId(), address: "", ownershipShare: 100, personalUsePct: 0, grossRents: 0, otherIncome: 0, expenses: {}, ucc: 0, additions: 0, ccaClaim: null };
 }
 
 let seq = 0;
@@ -268,6 +305,7 @@ export const EXAMPLE_RETURN: TaxReturn = {
     { id: "s1", kind: "t4", issuer: "Prairie Logistics Ltd.", values: { b14: 60000, b16: 3361.75, b18: 984, b22: 9000, b26: 60000, b24: 60000 } },
     { id: "s2", kind: "rrsp", issuer: "Assiniboine Credit Union", values: { remainder: 5000 } },
   ],
+  rentals: [],
   other: { ...EMPTY_OTHER, donations: 300 },
   carry: { ...EMPTY_CARRY, rrspDeductionLimit: 12000 },
 };

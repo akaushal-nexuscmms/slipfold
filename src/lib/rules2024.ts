@@ -80,7 +80,7 @@ const PROVINCES: Record<ProvinceCode, ProvinceRules> = {
     lowIncome: { kind: "bc", line: "79", max: 547, threshold: 24_338, rate: 0.0356 }, // [R24] BC428 lines 73–79; zero at $39,703
   }),
   MB: std({
-    code: "MB", name: "Manitoba", form: "MB428",
+    code: "MB", name: "Manitoba", form: "MB428", finalLine: "82", lines: { tax: "8" },
     brackets: [{ upTo: 47_000, rate: 0.108 }, { upTo: 100_000, rate: 0.1275 }, { upTo: Infinity, rate: 0.174 }], // [R24]
     creditRate: 0.108, bpa: { max: 15_780 }, spouse: { base: 9_134 }, age: { amount: 3_728, threshold: 27_749, reductionRate: 0.15 }, pensionIncomeAmount: 1_000, disabilityAmount: 6_180, medicalThreshold: 1_728, // [R24] no BPA phase-out in 2024 (it starts 2025)
     donations: { firstTier: 200, firstRate: 0.108, secondRate: 0.174 }, dividend: { eligible: 0.08, nonEligible: 0.007835 }, // [D24]

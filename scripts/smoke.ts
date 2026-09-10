@@ -4,6 +4,10 @@ import { compute, bpaFederal } from "../src/lib/engine.ts";
 import { EXAMPLE_RETURN, EMPTY_CARRY, EMPTY_OTHER, EMPTY_PROFILE, emptyReturn, type TaxReturn } from "../src/lib/model.ts";
 import { PROVINCES, PROVINCE_LIST, taxOn, FEDERAL, RULES_2025 } from "../src/lib/rules2025.ts";
 import { RULES_2024 } from "../src/lib/rules2024.ts";
+import { buildReturnPdf, fieldValues } from "../src/lib/pdf.ts";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { getRules, SUPPORTED_YEARS } from "../src/lib/rules.ts";
 import { rollForward } from "../src/lib/store.ts";
 import { createVault, unlockVault, seal, open, isSealed } from "../src/lib/crypto.ts";
@@ -44,10 +48,10 @@ eq("ex: 34900 donation credit", line(ex, "34900"), 58);
 eq("ex: 35000", line(ex, "35000"), 3158.21);
 eq("ex: 40400 federal tax", line(ex, "40400"), 7893.08);
 eq("ex: 42000 net federal", line(ex, "42000"), 4734.87);
-eq("ex: MB 428 gross", line(ex, "42"), 6023.96);
+eq("ex: MB 428 gross (form line 8)", line(ex, "8"), 6023.96);
 eq("ex: MB 58840", line(ex, "58840"), 2112.56);
 eq("ex: MB 58969 donations", line(ex, "58969"), 39);
-eq("ex: MB tax (92)", line(ex, "92"), 3872.4);
+eq("ex: MB tax (form line 82)", line(ex, "82"), 3872.4);
 eq("ex: 42800", line(ex, "42800"), 3872.4);
 eq("ex: 43500 total payable", line(ex, "43500"), 8607.27);
 eq("ex: 43700 withheld", line(ex, "43700"), 9000);
@@ -129,7 +133,7 @@ eq("student: federal tuition used = amount needed to zero tax", line(stuRes, "32
 eq("student: federal tuition carried = 9,000 − used", line(stuRes, "Tuition (fed)"), 3289.22);
 eq("student: federal tax after credits is zero", line(stuRes, "40600"), 0);
 eq("student: provincial tuition also limited and carried", (line(stuRes, "58560") ?? 0) + (line(stuRes, "Tuition (prov)") ?? 0), 9000);
-eq("student: provincial tax zero", line(stuRes, "92"), 0);
+eq("student: provincial tax zero", line(stuRes, "82"), 0);
 
 // ---------- spouse, age, pension, Quebec ----------
 const sr: TaxReturn = {
@@ -224,6 +228,26 @@ eq("rollForward: tuition carried", rollForward(stu).carry.tuitionFederal, 3289.2
   eq("YT carries the Canada employment amount", line(yt, "58310"), 1471);
 }
 
+// ---------- rental (T776) ----------
+{
+  const base = { ...emptyReturn(2024), profile: { ...EMPTY_PROFILE, province: "MB" as const, dateOfBirth: "1990-01-01" }, slips: [{ id: "t", kind: "t4" as const, issuer: "E", values: { b14: 72747.76, b16: 3867.5, b16a: 169.91, b18: 1049.12, b26: 72747.76 } }] };
+  // a loss: gross 18,000, expenses 20,234.76 → net −2,234.76 → total income 72,747.76 − 2,234.76 = 70,513
+  const loss = compute({ ...base, rentals: [{ id: "r1", address: "12 Elm St", ownershipShare: 100, personalUsePct: 0, grossRents: 18000, otherIncome: 0, expenses: { interest: 9000, propertyTax: 3234.76, insurance: 1200, repairs: 2800, utilities: 2500, management: 1500 }, ucc: 0, additions: 0, ccaClaim: null }] });
+  eq("rental: net loss on 12600", line(loss, "12600"), -2234.76);
+  eq("rental: gross rents on 12599", line(loss, "12599"), 18000);
+  eq("rental: loss reduces total income (72,747.76 − 2,234.76)", line(loss, "15000"), 70513);
+  eq("rental: no CCA line when no UCC", loss.lines.some((l) => l.line === "9936"), false);
+  // CCA cannot create a loss: profit 1,000 before CCA, UCC 100,000 → CCA max 4,000 capped at 1,000 → net 0
+  const cap = compute({ ...base, rentals: [{ id: "r2", address: "Condo", ownershipShare: 100, personalUsePct: 0, grossRents: 12000, otherIncome: 0, expenses: { interest: 11000 }, ucc: 100000, additions: 0, ccaClaim: null }] });
+  eq("rental: CCA capped at net income before CCA", [line(cap, "9936"), line(cap, "12600")], [1000, 0]);
+  eq("rental: closing UCC = 100,000 − 1,000", line(cap, "UCC r2"), 99000);
+  // half-year rule on additions, chosen CCA, co-owner share, personal use
+  const mix = compute({ ...base, rentals: [{ id: "r3", address: "Duplex", ownershipShare: 50, personalUsePct: 40, grossRents: 24000, otherIncome: 600, expenses: { interest: 8000, propertyTax: 2000 }, ucc: 0, additions: 200000, ccaClaim: 500 }] });
+  // gross 24,600; expenses 10,000 × 60% = 6,000 → net before CCA 18,600 × 50% = 9,300; CCA available = 100,000 × 4% × 60% × 50% = 1,200; chosen 500 → net 8,800
+  eq("rental: personal use and co-owner share applied", [line(mix, "9369"), line(mix, "9936"), line(mix, "12600")], [9300, 500, 8800]);
+  eq("rental: roll-forward keeps the property, clears amounts, carries UCC", (() => { const n = rollForward({ ...base, rentals: [{ id: "r2", address: "Condo", ownershipShare: 100, personalUsePct: 0, grossRents: 12000, otherIncome: 0, expenses: { interest: 11000 }, ucc: 100000, additions: 0, ccaClaim: null }] }); return [n.rentals.length, n.rentals[0].address, n.rentals[0].grossRents, n.rentals[0].ucc]; })(), [1, "Condo", 0, 99000]);
+}
+
 // ---------- tax year 2024 ----------
 {
   eq("years: 2025 and 2024 supported, newest first", SUPPORTED_YEARS, [2025, 2024]);
@@ -241,7 +265,7 @@ eq("rollForward: tuition carried", rollForward(stu).carry.tuitionFederal, 3289.2
   eq("2024 MB: total federal credits", line(mb24, "35000"), 3210.69);
   eq("2024 MB: net federal tax", line(mb24, "42000"), 7921.08);
   eq("2024 MB: Manitoba credits", line(mb24, "61500"), 2165.03);
-  eq("2024 MB: Manitoba tax", line(mb24, "92"), 5752.95);
+  eq("2024 MB: Manitoba tax", line(mb24, "82"), 5752.95);
   eq("2024 MB: result reports its year", mb24.year, 2024);
   eq("2024: unsupported year falls back to latest rules", getRules(2023).year, 2025);
   // 2024 Ontario: surtax thresholds 5,554 / 7,108 and tax reduction basic 286
@@ -254,6 +278,29 @@ eq("rollForward: tuition carried", rollForward(stu).carry.tuitionFederal, 3289.2
   // 2024 NS BPA supplement: 11,481 at 25,000 net income, 8,481 at 75,000, linear between
   const nsBpa = (income: number) => compute({ ...emptyReturn(2024), profile: { ...EMPTY_PROFILE, province: "NS", dateOfBirth: "1990-01-01" }, slips: [{ id: "t", kind: "t4", issuer: "E", values: { b14: income, b26: income } }] }).lines.find((l) => l.line === "58040")?.value;
   eq("2024 NS BPA with supplement", [nsBpa(20000), nsBpa(50000), nsBpa(80000)], [11481, 9981, 8481]);
+}
+
+// ---------- filled CRA forms ----------
+{
+  const plan = fieldValues(EXAMPLE_RETURN, ex);
+  eq("pdf plan: T1 identification", [plan.t1["ID_FirstNameInitial[0]"], plan.t1["ID_LastName[0]"], plan.t1["PostalCode[0]"], plan.t1Checks], ["Sam", "Example", "R3B2A7", ["MaritalStatus[5]"]]);
+  eq("pdf plan: T1 coded lines", [plan.t1["Line_10100_Amount[0]"], plan.t1["Line_20800_Amount[0]"], plan.t1["Line_35000_Amount[0]"], plan.t1["Line_48400_Amount[0]"]], ["60000.00", "5000.00", "3158.21", "392.73"]);
+  eq("pdf plan: Part A column 1 (taxable 54,435 in the first bracket)", [plan.t1["Line36Amount1[0]"], plan.t1["Line42Amount1[0]"], plan.t1["Line42Amount2[0]"]], ["54435.00", "7893.08", undefined]);
+  eq("pdf plan: MB428 key rows", [plan.p428File, plan.p428!["Line9[0].Amount[0]"], plan.p428!["Line19[0].Amount[0]"], plan.p428!["Line57[0].Amount[0]"], plan.p428!["PartC[0].Line58[0].Amount[0]"], plan.p428!["PartC[0].Line82[0].Amount[0]"]], ["mb428.pdf", "15780.00", "2796.75", "2151.56", "6023.96", "3872.40"]);
+  eq("pdf plan: MB428 column 2 (54,435 is over 47,000)", [plan.p428!["Column2[0].Line2[0].Amount[0]"], plan.p428!["Column2[0].Line8[0].Amount[0]"]], ["54435.00", "6023.96"]);
+  eq("pdf plan: attach list mentions Schedule 7 and 8 and signing", plan.attach.some((a) => a.startsWith("Schedule 7")) && plan.attach.some((a) => a.startsWith("Schedule 8")) && plan.attach.some((a) => a.includes("Sign")), true);
+  const withRental = { ...EXAMPLE_RETURN, rentals: [{ id: "r", address: "12 Elm St", ownershipShare: 100, personalUsePct: 0, grossRents: 18000, otherIncome: 0, expenses: { interest: 9000, propertyTax: 3234.76 }, ucc: 0, additions: 0, ccaClaim: null }] };
+  const plan2 = fieldValues(withRental, compute(withRental));
+  eq("pdf plan: T776 rows", [plan2.t776.length, plan2.t776[0]["P3_Frm_Ln8141_inpt[0]"], plan2.t776[0]["P4_Frm_Ln8710_inpt1[0]"], plan2.t776[0]["P4_Frm_Ln9946_inpt[0]"], plan2.t1["Line_12600_Amount[0]"]], [1, "18000.00", "9000.00", "5765.24", "5765.24"]);
+  // a real build from the bundled forms
+  const load = async (file: string) => new Uint8Array(readFileSync(`public/forms/${withRental.year}/${file}`));
+  const built = await buildReturnPdf(withRental, compute(withRental), load);
+  eq("pdf build: checklist + T1 (8) + MB428 (3) + T776 (7) = 19 pages", built.pages, 19);
+  eq("pdf build: fields filled, few missing", [built.filled > 60, built.missing.length < 8], [true, true]);
+  if (built.missing.length) console.log("     (missing fields:", built.missing.join(", "), ")");
+  writeFileSync(join(tmpdir(), "slipfold-smoke-return.pdf"), built.bytes);
+  const b24 = await buildReturnPdf({ ...withRental, year: 2024 }, compute({ ...withRental, year: 2024 }), async (file) => new Uint8Array(readFileSync(`public/forms/2024/${file}`)));
+  eq("pdf build: 2024 forms build too (2024 T776 is one page shorter)", b24.pages, 18);
 }
 
 // ---------- encryption at rest ----------

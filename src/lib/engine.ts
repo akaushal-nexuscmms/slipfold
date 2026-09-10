@@ -2,14 +2,14 @@
 // from the slips and facts the user entered, and explains each one. Pure: no UI, no storage.
 
 import { getRules, marginalRate, round2, taxOn, type ProvinceRules, type YearRules } from "./rules.ts";
-import { num, type Slip, type TaxReturn } from "./model.ts";
+import { CCA_CLASS1_RATE, RENTAL_EXPENSES, num, type RentalProperty, type Slip, type TaxReturn } from "./model.ts";
 
 export type Section = "income" | "deductions" | "taxable" | "fedCredits" | "fedTax" | "provincial" | "refund" | "carry";
 
 export type Line = {
   /** The number printed on the form, or a form-local code for schedule lines. */
   line: string;
-  form: "T1" | "S3" | "S7" | "S8" | "S11" | "S15" | "428" | "479" | "Next year";
+  form: "T1" | "S3" | "S7" | "S8" | "S11" | "S15" | "T776" | "428" | "479" | "Next year";
   label: string;
   value: number;
   section: Section;
@@ -134,10 +134,29 @@ export function compute(ret: TaxReturn): Result {
   const taxableScholar = scholarships.total ? (fullTimeMonths > 0 ? 0 : Math.max(0, round2(scholarships.total - 500))) : 0;
   if (scholarships.total) push({ line: "13010", form: "T1", label: "Taxable scholarships, bursaries and fellowships", value: taxableScholar, section: "income", from: [...scholarships.parts, fullTimeMonths > 0 ? `Full-time months on T2202: ${fullTimeMonths} → fully exempt` : "No full-time months → first $500 exempt"], explain: "Scholarships are fully exempt when you were a full-time student in the year; otherwise the first $500 is exempt." });
 
+  // Rental — T776, one statement per property; net can be negative and reduces total income
+  let rentalGross = 0;
+  let rentalNet = 0;
+  const rentalCarry: { id: string; closingUcc: number }[] = [];
+  for (const r of ret.rentals ?? []) {
+    const t = rental(r);
+    rentalGross = round2(rentalGross + t.gross); // line 12599 is the whole property's gross, even when co-owned (T4036)
+    rentalNet = round2(rentalNet + t.net);
+    rentalCarry.push({ id: r.id, closingUcc: t.closingUcc });
+    const name = r.address.trim() || "Rental property";
+    push({ line: "8299", form: "T776", label: `${name} — total gross rental income`, value: t.gross, section: "income", from: [`Gross rents ${money(r.grossRents)}`, ...(r.otherIncome ? [`Other income ${money(r.otherIncome)}`] : [])], explain: "Rents plus parking, laundry or storage income, for the whole property before any co-owner or personal-use split." });
+    push({ line: "9369", form: "T776", label: `${name} — net income (loss) before CCA`, value: t.netBeforeCcaShare, section: "income", from: [`Expenses ${money(t.expensesTotal)}${r.personalUsePct ? ` × rental share ${100 - r.personalUsePct}% = ${money(t.expensesDeductible)}` : ""}`, `Gross ${money(t.gross)} − deductible expenses ${money(t.expensesDeductible)} = ${money(t.netBeforeCca)}`, ...(r.ownershipShare !== 100 ? [`× your ${r.ownershipShare}% share`] : [])], explain: t.netBeforeCcaShare < 0 ? "A rental loss. It is deducted from your other income on line 12600 — that is why total income can be lower than your T4." : "Rental profit before capital cost allowance." });
+    if (t.ccaMax > 0 || r.ucc > 0 || r.additions > 0) push({ line: "9936", form: "T776", label: `${name} — capital cost allowance claimed`, value: t.cca, section: "income", from: [`UCC ${money(r.ucc)} + additions ${money(r.additions)} (half-year rule: ${money(r.additions / 2)} counts this year)`, `Maximum ${money(t.ccaAvailable)} at ${pct(CCA_CLASS1_RATE)}, capped at net income before CCA ${money(Math.max(0, t.netBeforeCcaShare))}`, r.ccaClaim === null ? "Claiming the maximum allowed" : `You chose ${money(r.ccaClaim)}`], explain: "CCA is optional and cannot create or increase a rental loss. Claiming it lowers tax now but is recaptured as income when you sell for more than the UCC, and can affect the principal residence exemption on a home you partly rent. Many owners skip it on purpose.", note: t.ccaMax > 0 && r.ccaClaim === null ? "Decide whether to claim CCA — see the explanation." : undefined });
+  }
+  if (ret.rentals?.length) {
+    push({ line: "12599", form: "T1", label: "Gross rental income", value: rentalGross, section: "income", always: true, from: ret.rentals.map((r) => `${r.address.trim() || "Rental"}: ${money(rental(r).gross)}`), explain: "Gross rents for the entire property (not just your share), for information. Not added into total income — line 12600 is." });
+    push({ line: "12600", form: "T1", label: "Net rental income (loss)", value: rentalNet, section: "income", always: true, from: ret.rentals.map((r) => `${r.address.trim() || "Rental"}: ${money(rental(r).net)}`), explain: rentalNet < 0 ? "Negative: the rental lost money after expenses, and the loss reduces your total income and your tax. Attach a T776 for each property." : "Net rental profit after expenses and any CCA, from your T776 statements." });
+  }
+
   const selfEmp = round2(num(o.selfEmploymentNet) + sumBox(slips, "t4a", "b020", "020").total);
   if (selfEmp) push({ line: "13500", form: "T1", label: "Net self-employment income (business, professional, commission)", value: selfEmp, section: "income", from: [`Net from your T2125: ${money(o.selfEmploymentNet)}`, ...sumBox(slips, "t4a", "b020", "020").parts], explain: "The net figure from your own T2125 (this app does not prepare the T2125 itself). Enter it on the line matching the kind of business — 13500 business, 13700 professional, 13900 commission.", note: "You must complete a T2125 for the gross and expense detail." });
 
-  const totalIncome = round2(employment + num(o.otherEmploymentIncome) + t4a_016.total + t4e_14.total + dividends + interest + taxableGains + t4a_other + taxableScholar + selfEmp);
+  const totalIncome = round2(employment + num(o.otherEmploymentIncome) + t4a_016.total + t4e_14.total + dividends + interest + taxableGains + rentalNet + t4a_other + taxableScholar + selfEmp);
   push({ line: "15000", form: "T1", label: "Total income", value: totalIncome, section: "income", always: true, explain: "Every income line added up." });
 
   // ---------------- Step 3: net income ----------------
@@ -313,6 +332,10 @@ export function compute(ret: TaxReturn): Result {
   push({ line: "Tuition (prov)", form: "Next year", label: `Unused ${prov.name} tuition to carry forward`, value: provTax.tuitionCarry, section: "carry", always: tuitionAvailFed > 0, explain: "Provincial tuition carries separately from federal." });
   const lossesLeft = round2(Math.max(0, num(carry.netCapitalLosses) - lossApplied) + (gains < 0 ? -gains * FEDERAL.capitalGainsInclusion : 0));
   push({ line: "Losses", form: "Next year", label: "Net capital losses to carry forward", value: lossesLeft, section: "carry", always: lossesLeft > 0, explain: "Old losses not used this year plus half of any net loss this year. Never expires." });
+  for (const r of ret.rentals ?? []) {
+    const c = rentalCarry.find((x) => x.id === r.id)!;
+    push({ line: `UCC ${r.id}`, form: "Next year", label: `${r.address.trim() || "Rental property"} — closing UCC (next year's opening)`, value: c.closingUcc, section: "carry", always: true, from: [`Opening ${money(r.ucc)} + additions ${money(r.additions)} − CCA claimed ${money(rental(r).cca)}`], explain: "The undepreciated capital cost of the building carries forward per property. It is what next year's CCA and any recapture on sale are measured against." });
+  }
   push({ line: "FHSA", form: "Next year", label: "FHSA participation room carried (max $8,000)", value: round2(Math.min(FEDERAL.fhsaAnnual, Math.max(0, num(carry.fhsaRoom) - fhsa.total))), section: "carry", always: carry.fhsaRoom > 0, explain: "Unused FHSA room carries forward, capped at one year's worth." });
 
   if (quebec) warnings.push("Quebec: this app computes the federal T1 only. QPP/QPIP instead of CPP/EI and the TP-1 provincial return are not modelled.");
@@ -337,6 +360,25 @@ export function compute(ret: TaxReturn): Result {
     },
     warnings,
   };
+}
+
+/** One T776 statement. Personal-use share is removed from expenses; co-owner share applies before CCA; CCA cannot create a loss. */
+export function rental(r: RentalProperty) {
+  const gross = round2(num(r.grossRents) + num(r.otherIncome));
+  const expensesTotal = round2(RENTAL_EXPENSES.reduce((s, e) => s + num(r.expenses[e.key]), 0));
+  const rentalShareOfProperty = Math.max(0, Math.min(1, 1 - num(r.personalUsePct) / 100));
+  const expensesDeductible = round2(expensesTotal * rentalShareOfProperty);
+  const netBeforeCca = round2(gross - expensesDeductible);
+  const share = Math.max(0, Math.min(1, num(r.ownershipShare) / 100));
+  const grossShare = round2(gross * share);
+  const netBeforeCcaShare = round2(netBeforeCca * share);
+  const ccaAvailable = round2((num(r.ucc) + num(r.additions) / 2) * CCA_CLASS1_RATE * rentalShareOfProperty * share);
+  const ccaMax = round2(Math.min(ccaAvailable, Math.max(0, netBeforeCcaShare)));
+  const cca = r.ccaClaim === null ? ccaMax : round2(Math.max(0, Math.min(num(r.ccaClaim), ccaMax)));
+  const net = round2(netBeforeCcaShare - cca);
+  // UCC is tracked for the whole class at your share; CCA claimed reduces it
+  const closingUcc = round2(Math.max(0, num(r.ucc) + num(r.additions) - (share && rentalShareOfProperty ? cca / (share * rentalShareOfProperty) : cca)));
+  return { gross, grossShare, expensesTotal, expensesDeductible, netBeforeCca, netBeforeCcaShare, ccaAvailable, ccaMax, cca, net, closingUcc };
 }
 
 export function bpaFederal(netIncome: number, rules: YearRules): number {

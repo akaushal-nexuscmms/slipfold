@@ -24,4 +24,4 @@ dist-ssr
 *.sw?
 
 # local-only checks against real assessments
-*.local.ts
+*.local.*

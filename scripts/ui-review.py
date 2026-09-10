@@ -48,7 +48,7 @@ with sync_playwright() as p:
     last.locator("input[type=number]").first.fill("1000"); page.wait_for_timeout(500)
 
     # the return
-    page.get_by_role("button", name=re.compile(r"5 · Your return")).click(); page.wait_for_timeout(400)
+    page.get_by_role("button", name=re.compile(r"6 · Your return")).click(); page.wait_for_timeout(400)
     body = page.inner_text("body")
     check("return: total income now 61,380 (60,000 + 1,000 × 1.38)", "$61,380.00" in body, body[:200])
     check("return: dividend line 12000 present", "12000" in body and "Taxable amount of dividends" in body)
@@ -67,19 +67,19 @@ with sync_playwright() as p:
     # province switch → Ontario shows surtax/health premium lines
     page.get_by_role("button", name=re.compile(r"1 · You")).click(); page.wait_for_timeout(200)
     page.locator("select").nth(1).select_option("ON"); page.wait_for_timeout(400)
-    page.get_by_role("button", name=re.compile(r"5 · Your return")).click(); page.wait_for_timeout(400)
+    page.get_by_role("button", name=re.compile(r"6 · Your return")).click(); page.wait_for_timeout(400)
     body = page.inner_text("body")
     check("ontario: ON428 named and health premium line present", "ontario tax (form on428)" in body.lower() and "ontario health premium" in body.lower())
     page.get_by_role("button", name=re.compile(r"1 · You")).click(); page.wait_for_timeout(200)
     page.locator("select").nth(1).select_option("QC"); page.wait_for_timeout(400)
-    page.get_by_role("button", name=re.compile(r"5 · Your return")).click(); page.wait_for_timeout(400)
+    page.get_by_role("button", name=re.compile(r"6 · Your return")).click(); page.wait_for_timeout(400)
     body = page.inner_text("body")
     check("quebec: abatement line and TP-1 warning", "Quebec abatement" in body and "TP-1" in body)
     page.get_by_role("button", name=re.compile(r"1 · You")).click(); page.wait_for_timeout(200)
     page.locator("select").nth(1).select_option("MB"); page.wait_for_timeout(300)
 
     # next year: roll forward
-    page.get_by_role("button", name=re.compile(r"6 · Next year")).click(); page.wait_for_timeout(300)
+    page.get_by_role("button", name=re.compile(r"7 · Next year")).click(); page.wait_for_timeout(300)
     body = page.inner_text("body")
     check("next year: carry-forward rows with explanations", "Unused RRSP contributions" in body and "Estimated new RRSP room" in body)
     page.screenshot(path=f"{OUT}/05-next-year.png", full_page=True)
@@ -111,6 +111,40 @@ with sync_playwright() as p:
     mf = page.evaluate("fetch('/manifest.webmanifest').then(r => r.status)")
     check("pwa: manifest served", mf == 200, str(mf))
 
+    # ---------- rental + filled CRA PDF ----------
+    page.locator("select").first.select_option("2025"); page.wait_for_timeout(600)
+    page.get_by_role("button", name=re.compile(r"3 · Rental")).click(); page.wait_for_timeout(300)
+    page.get_by_role("button", name="+ Add property").click(); page.wait_for_timeout(300)
+    cards = page.locator("div.rounded-xl"); last = cards.nth(cards.count() - 1)
+    last.locator("input").first.fill("12 Elm St"); page.wait_for_timeout(100)
+    nums = last.locator("input[type=number]")
+    nums.nth(2).fill("18000"); nums.nth(6).fill("9000"); nums.nth(12).fill("3234.76"); page.wait_for_timeout(500)
+    body = page.inner_text("body")
+    check("rental: net shown on the property card", "5,765.24" in body, body[-300:])
+    page.get_by_role("button", name=re.compile(r"6 · Your return")).click(); page.wait_for_timeout(500)
+    body = page.inner_text("body")
+    check("rental: line 12600 on the return", "12600" in body and "5,765.24" in body)
+    pdfpath = None
+    try:
+        with page.expect_download(timeout=60000) as dl:
+            page.get_by_role("button", name=re.compile(r"Download the filled return")).click()
+        d = dl.value; pdfpath = f"{OUT}/{d.suggested_filename}"; d.save_as(pdfpath)
+    except Exception as e:
+        t = page.inner_text("body"); i = t.find("CRA forms, filled")
+        check("pdf: download produced", False, f"{type(e).__name__}; card says: {t[i:i+900].replace(chr(10), ' | ')[-400:]}")
+    import pymupdf
+    doc = pymupdf.open(pdfpath) if pdfpath else None
+    if doc:
+        check("pdf: 19 pages (checklist + T1 + MB428 + T776)", len(doc) == 19, str(len(doc)))
+        check("pdf: T1 page 3 carries employment income", "60000.00" in doc[3].get_text())
+        check("pdf: MB428 carries the BPA", "15780.00" in doc[9].get_text())
+        check("pdf: T776 carries the net rental income", "5765.24" in doc[13].get_text())
+        check("pdf: checklist names Schedule 7 and signing", "Schedule 7" in doc[0].get_text() and "Sign" in doc[0].get_text())
+        check("pdf: status line reports fields filled", "fields filled" in page.inner_text("body"))
+    # remove the property again so later checks see the original example
+    page.get_by_role("button", name=re.compile(r"3 · Rental")).click(); page.wait_for_timeout(200)
+    page.get_by_role("button", name="Remove property").click(); page.wait_for_timeout(300)
+
     # ---------- tax year 2024 ----------
     page.get_by_role("button", name=re.compile(r"1 · You")).click(); page.wait_for_timeout(200)
     check("years: a '+ 2024 return' button is offered", page.get_by_role("button", name="+ 2024 return").count() == 1)
@@ -121,7 +155,7 @@ with sync_playwright() as p:
     page.get_by_role("button", name="+ T4", exact=True).click(); page.wait_for_timeout(200)
     cards = page.locator("div.rounded-xl"); last = cards.nth(cards.count() - 1)
     last.locator("input").first.fill("Employer 2024"); last.locator("input[type=number]").nth(0).fill("70000"); page.wait_for_timeout(500)
-    page.get_by_role("button", name=re.compile(r"5 · Your return")).click(); page.wait_for_timeout(400)
+    page.get_by_role("button", name=re.compile(r"6 · Your return")).click(); page.wait_for_timeout(400)
     body = page.inner_text("body")
     check("years: 2024 rules applied (Canada employment amount 1,433, BPA 15,705)", "$1,433.00" in body and "$15,705.00" in body)
     check("years: federal credit rate shown as 15% for 2024", "15%" in body or "15.00%" in body)
@@ -179,7 +213,7 @@ with sync_playwright() as p:
     dpage.screenshot(path=f"{OUT}/07-dark.png", full_page=False); dctx.close()
     mctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2)
     mpage = mctx.new_page(); mpage.goto(ROOT + "/"); mpage.wait_for_load_state("networkidle"); mpage.wait_for_timeout(400)
-    mpage.get_by_role("button", name=re.compile(r"5 · Your return")).click(); mpage.wait_for_timeout(400)
+    mpage.get_by_role("button", name=re.compile(r"6 · Your return")).click(); mpage.wait_for_timeout(400)
     sw = mpage.evaluate("document.documentElement.scrollWidth"); cw = mpage.evaluate("document.documentElement.clientWidth")
     check("mobile: no horizontal page scroll on the return tab", sw <= cw + 1, f"scrollWidth {sw} vs client {cw}")
     mpage.screenshot(path=f"{OUT}/08-mobile-return.png", full_page=True); mctx.close()

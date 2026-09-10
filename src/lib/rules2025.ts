@@ -131,7 +131,7 @@ export type LowIncomeRule =
   | { kind: "bc"; line: string; max: number; threshold: number; rate: number } // individual net income only [R1]
   | { kind: "family"; line: string; basic: number; spouse: number; maxTotal: number; thresholdSingle: number; thresholdFamily: number; rate: number; eligibleSingle?: number; eligibleFamily?: number; ageSelf?: number }; // adjusted family income = your net income + spouse's [R2][R3][R4]; ageSelf = PE's extra for 65+
 
-export const std = (o: Omit<ProvinceRules, "lines" | "finalLine" | "medicalRate"> & { finalLine?: string }): ProvinceRules => ({
+export const std = (o: Omit<ProvinceRules, "lines" | "finalLine" | "medicalRate"> & { finalLine?: string; lines?: { tax: string } }): ProvinceRules => ({
   medicalRate: 0.03,
   lines: { tax: "42" },
   finalLine: o.finalLine ?? "92",
@@ -163,7 +163,7 @@ export const PROVINCES: Record<ProvinceCode, ProvinceRules> = {
     lowIncome: { kind: "bc", line: "79", max: 562, threshold: 25_020, rate: 0.0356 }, // [R1][R4] BC428 lines 73–79; zero at $40,807
   }),
   MB: std({
-    code: "MB", name: "Manitoba", form: "MB428",
+    code: "MB", name: "Manitoba", form: "MB428", finalLine: "82", lines: { tax: "8" },
     brackets: [{ upTo: 47_000, rate: 0.108 }, { upTo: 100_000, rate: 0.1275 }, { upTo: Infinity, rate: 0.174 }], // [P1] frozen at 2024 levels
     creditRate: 0.108, bpa: { max: 15_780, min: 0, phaseStart: 200_000, phaseEnd: 400_000 }, spouse: { base: 9_134 }, age: { amount: 3_728, threshold: 27_749, reductionRate: 0.15 }, pensionIncomeAmount: 1_000, disabilityAmount: 6_180, medicalThreshold: 1_728, // [F2][P1]
     donations: { firstTier: 200, firstRate: 0.108, secondRate: 0.174 }, dividend: { eligible: 0.08, nonEligible: 0.007835 }, // [D1][D2]

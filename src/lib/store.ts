@@ -3,7 +3,7 @@
 // with the same passphrase when one is set.
 import Dexie, { type EntityTable } from "dexie";
 import { EMPTY_CARRY, EMPTY_OTHER, EMPTY_PROFILE, emptyReturn, newId, type Slip, type TaxReturn } from "./model.ts";
-import { compute } from "./engine.ts";
+import { compute, rental } from "./engine.ts";
 import { createVault, deriveKey, isSealed, open, seal, unlockVault, type Sealed, type VaultMeta } from "./crypto.ts";
 
 type ReturnRow = { year: number; data: TaxReturn | Sealed; updated: string };
@@ -21,7 +21,7 @@ class Db extends Dexie {
 export const db = new Db();
 export type Key = CryptoKey | null;
 
-const normalise = (year: number, d: TaxReturn): TaxReturn => ({ ...emptyReturn(year), ...d, profile: { ...EMPTY_PROFILE, ...d.profile }, other: { ...EMPTY_OTHER, ...d.other }, carry: { ...EMPTY_CARRY, ...d.carry } });
+const normalise = (year: number, d: TaxReturn): TaxReturn => ({ ...emptyReturn(year), ...d, profile: { ...EMPTY_PROFILE, ...d.profile }, rentals: d.rentals ?? [], other: { ...EMPTY_OTHER, ...d.other }, carry: { ...EMPTY_CARRY, ...d.carry } });
 
 async function readRow(row: ReturnRow, key: Key): Promise<TaxReturn> {
   if (isSealed(row.data)) {
@@ -108,6 +108,7 @@ export function rollForward(from: TaxReturn): TaxReturn {
     year: from.year + 1,
     profile: { ...from.profile },
     slips,
+    rentals: (from.rentals ?? []).map((r) => ({ ...r, id: newId(), grossRents: 0, otherIncome: 0, expenses: {}, additions: 0, ccaClaim: null, ucc: rental(r).closingUcc })),
     other: { ...EMPTY_OTHER, homeBuyer: false, rrspDeductToClaim: null, unionDuesNotOnT4: from.other.unionDuesNotOnT4, digitalNews: from.other.digitalNews },
     carry: {
       rrspDeductionLimit: 0, // comes from the new Notice of Assessment

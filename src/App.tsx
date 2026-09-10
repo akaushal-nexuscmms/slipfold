@@ -1,19 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { compute, type Line, type Section } from "./lib/engine";
-import { EXAMPLE_RETURN, SLIP_DEFS, emptyReturn, newSlip, num, type MaritalStatus, type Slip, type SlipKind, type TaxReturn } from "./lib/model";
+import { compute, rental, type Line, type Result, type Section } from "./lib/engine";
+import { EXAMPLE_RETURN, RENTAL_EXPENSES, SLIP_DEFS, emptyReturn, newRental, newSlip, num, type MaritalStatus, type RentalProperty, type Slip, type SlipKind, type TaxReturn } from "./lib/model";
 import { LATEST_YEAR, SUPPORTED_YEARS, getRules, isSupportedYear, type ProvinceCode } from "./lib/rules";
 import { deleteYear, exportJson, getVaultMeta, isEncryptedBackup, listYears, loadReturn, parseImport, removePassphrase, rollForward, saveReturn, setPassphrase, unlock } from "./lib/store";
 import { forgetKey, recallKey, rememberKey, type VaultMeta } from "./lib/crypto";
 import { Caption, Card, CopyButton, Field, MoneyInput, Notice, btnGhost, btnIcon, btnPrimary, inputCls, money } from "./ui";
 
-type Tab = "profile" | "slips" | "other" | "carry" | "return" | "next" | "backup";
+type Tab = "profile" | "slips" | "rental" | "other" | "carry" | "return" | "next" | "backup";
 const TABS: { id: Tab; label: string }[] = [
   { id: "profile", label: "1 · You" },
   { id: "slips", label: "2 · Slips" },
-  { id: "other", label: "3 · Other amounts" },
-  { id: "carry", label: "4 · From last year" },
-  { id: "return", label: "5 · Your return, line by line" },
-  { id: "next", label: "6 · Next year" },
+  { id: "rental", label: "3 · Rental (T776)" },
+  { id: "other", label: "4 · Other amounts" },
+  { id: "carry", label: "5 · From last year" },
+  { id: "return", label: "6 · Your return, line by line" },
+  { id: "next", label: "7 · Next year" },
   { id: "backup", label: "Backup" },
 ];
 
@@ -183,9 +184,10 @@ export default function App() {
 
         {tab === "profile" && <ProfileTab ret={ret} patch={patch} />}
         {tab === "slips" && <SlipsTab ret={ret} patch={patch} />}
+        {tab === "rental" && <RentalTab ret={ret} patch={patch} />}
         {tab === "other" && <OtherTab ret={ret} patch={patch} />}
         {tab === "carry" && <CarryTab ret={ret} patch={patch} />}
-        {tab === "return" && <ReturnTab lines={result.lines} summary={result.summary} warnings={result.warnings} province={ret.profile.province} year={ret.year} />}
+        {tab === "return" && <ReturnTab ret={ret} result={result} lines={result.lines} summary={result.summary} warnings={result.warnings} province={ret.profile.province} year={ret.year} />}
         {tab === "next" && <NextTab lines={result.lines} year={ret.year} onStart={startNextYear} />}
         {tab === "backup" && (
           <BackupTab
@@ -379,7 +381,85 @@ function SlipsTab({ ret, patch }: { ret: TaxReturn; patch: (p: Partial<TaxReturn
   );
 }
 
-// ---------------- 3 · Other amounts ----------------
+// ---------------- 3 · Rental (T776) ----------------
+
+function RentalTab({ ret, patch }: { ret: TaxReturn; patch: (p: Partial<TaxReturn>) => void }) {
+  const rentals = ret.rentals ?? [];
+  const update = (id: string, p: Partial<RentalProperty>) => patch({ rentals: rentals.map((r) => (r.id === id ? { ...r, ...p } : r)) });
+  const remove = (id: string) => patch({ rentals: rentals.filter((r) => r.id !== id) });
+  return (
+    <>
+      <Card title="Rental properties — Statement of Real Estate Rentals (T776)" action={<button className={btnPrimary} onClick={() => patch({ rentals: [...rentals, newRental()] })}>+ Add property</button>}>
+        <p className="text-sm text-ink-soft">
+          One statement per property. The app computes net rental income (or loss) for line 12600, applies your ownership share and any personal-use split, and handles capital cost allowance with the rule that it cannot create a loss. A rental loss reduces your total income — which is why line 15000 can be lower than your T4.
+        </p>
+      </Card>
+      {rentals.length === 0 && <p className="text-sm text-ink-soft">No rental properties. Add one if you rented out a house, condo, room or basement suite.</p>}
+      {rentals.map((r) => {
+        const t = rental(r);
+        return (
+          <Card
+            key={r.id}
+            title={`T776 — ${r.address.trim() || "untitled property"}`}
+            action={
+              <button className={btnIcon} onClick={() => remove(r.id)} aria-label="Remove property">
+                ×
+              </button>
+            }
+          >
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <Field label="Property address" help="Recurs every year; the CRA wants it on the T776." className="sm:col-span-2 lg:col-span-3">
+                <input className={inputCls} value={r.address} onChange={(e) => update(r.id, { address: e.target.value })} />
+              </Field>
+              <Field label="Your ownership share (%)" help="100 if it is yours alone. Co-owners each report their share of the same statement; a spouse who is a co-owner files their own T776 with their share.">
+                <input className={`${inputCls} font-mono`} type="number" min={0} max={100} value={r.ownershipShare} onChange={(e) => update(r.id, { ownershipShare: Number(e.target.value) || 0 })} />
+              </Field>
+              <Field label="Personal-use portion (%)" help="If you rent part of your own home, the share you live in. Expenses are reduced by this share; rents are not. Zero for a property you don't live in.">
+                <input className={`${inputCls} font-mono`} type="number" min={0} max={100} value={r.personalUsePct} onChange={(e) => update(r.id, { personalUsePct: Number(e.target.value) || 0 })} />
+              </Field>
+              <Field label="Gross rents (line 8141)" help="All rent received for the year for the whole property, before any split.">
+                <MoneyInput value={r.grossRents} onChange={(n) => update(r.id, { grossRents: n })} />
+              </Field>
+              <Field label="Other rental income (line 8230)" help="Parking, laundry, storage, anything the tenant pays beyond rent.">
+                <MoneyInput value={r.otherIncome} onChange={(n) => update(r.id, { otherIncome: n })} />
+              </Field>
+            </div>
+            <Caption tone="accent">Expenses — current costs of earning the rent (full amounts; the app applies the personal-use share)</Caption>
+            <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {RENTAL_EXPENSES.map((e) => (
+                <Field key={e.key} label={`Line ${e.box} — ${e.label}`} help={e.help}>
+                  <MoneyInput value={num(r.expenses[e.key])} onChange={(n) => update(r.id, { expenses: { ...r.expenses, [e.key]: n } })} />
+                </Field>
+              ))}
+            </div>
+            <Caption tone="accent">Capital cost allowance (optional)</Caption>
+            <div className="mt-2 grid gap-3 sm:grid-cols-3">
+              <Field label="Opening UCC of the building (Class 1)" help="Undepreciated capital cost at the start of the year, from last year's T776. Zero if you have never claimed CCA and made no additions. Land is never included.">
+                <MoneyInput value={r.ucc} onChange={(n) => update(r.id, { ucc: n })} />
+              </Field>
+              <Field label="Capital additions this year" help="Building cost (excluding land) if bought this year, or capital improvements: new roof, kitchen, addition. Only half counts for CCA in the year added.">
+                <MoneyInput value={r.additions} onChange={(n) => update(r.id, { additions: n })} />
+              </Field>
+              <Field label="CCA to claim" help={`Leave blank for the maximum (${money(t.ccaMax)} this year). Enter 0 to skip CCA — common when you plan to sell, because claimed CCA is recaptured as income and can cost you part of the principal residence exemption on a home you partly rent.`}>
+                <MoneyInput value={r.ccaClaim ?? 0} onChange={(n) => update(r.id, { ccaClaim: n === 0 ? null : n })} placeholder="maximum" />
+              </Field>
+            </div>
+            <div className="mt-3 grid gap-1 rounded-lg border border-rule bg-surface p-3 font-mono text-xs sm:grid-cols-2">
+              <span>Gross income (8299)</span><span className="text-right">{money(t.gross)}</span>
+              <span>Deductible expenses</span><span className="text-right">{money(t.expensesDeductible)}</span>
+              <span>Net before CCA, your share (9369)</span><span className={`text-right ${t.netBeforeCcaShare < 0 ? "text-danger" : ""}`}>{money(t.netBeforeCcaShare)}</span>
+              <span>CCA claimed (9936)</span><span className="text-right">{money(t.cca)}</span>
+              <span className="font-semibold">Net rental income (loss) → line 12600</span><span className={`text-right font-semibold ${t.net < 0 ? "text-danger" : ""}`}>{money(t.net)}</span>
+              <span>Closing UCC (carries to next year)</span><span className="text-right">{money(t.closingUcc)}</span>
+            </div>
+          </Card>
+        );
+      })}
+    </>
+  );
+}
+
+// ---------------- 4 · Other amounts ----------------
 
 function OtherTab({ ret, patch }: { ret: TaxReturn; patch: (p: Partial<TaxReturn>) => void }) {
   const o = ret.other;
@@ -466,8 +546,35 @@ function CarryTab({ ret, patch }: { ret: TaxReturn; patch: (p: Partial<TaxReturn
 
 // ---------------- 5 · The return ----------------
 
-function ReturnTab({ lines, summary, warnings, province, year }: { lines: Line[]; summary: ReturnType<typeof compute>["summary"]; warnings: string[]; province: ProvinceCode; year: number }) {
+function ReturnTab({ ret, result, lines, summary, warnings, province, year }: { ret: TaxReturn; result: Result; lines: Line[]; summary: ReturnType<typeof compute>["summary"]; warnings: string[]; province: ProvinceCode; year: number }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfMsg, setPdfMsg] = useState<string | null>(null);
+  const downloadPdf = async () => {
+    setPdfBusy(true);
+    setPdfMsg(null);
+    try {
+      const { buildReturnPdf } = await import("./lib/pdf");
+      const base = import.meta.env.BASE_URL;
+      const out = await buildReturnPdf(ret, result, async (file) => {
+        const r = await fetch(`${base}forms/${ret.year}/${file}`);
+        if (!r.ok) throw new Error(`Could not load ${file} for ${ret.year}`);
+        return new Uint8Array(await r.arrayBuffer());
+      });
+      const blob = new Blob([out.bytes as BlobPart], { type: "application/pdf" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${ret.year}-return-${(ret.profile.lastName || "slipfold").toLowerCase().replace(/[^a-z0-9]+/g, "-")}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setPdfMsg(`${out.pages} pages, ${out.filled} fields filled. Page 1 is your checklist${out.missing.length ? `; ${out.missing.length} field${out.missing.length === 1 ? "" : "s"} the form did not have were skipped` : ""}.`);
+    } catch (e) {
+      setPdfMsg(e instanceof Error ? e.message : "Could not build the PDF.");
+    } finally {
+      setPdfBusy(false);
+    }
+  };
   const toggle = (k: string) =>
     setOpen((s) => {
       const n = new Set(s);
@@ -490,6 +597,22 @@ function ReturnTab({ lines, summary, warnings, province, year }: { lines: Line[]
         <Stat label={summary.balance < 0 ? "Refund (48400)" : "Balance owing (48500)"} value={money(Math.abs(summary.balance))} tone={summary.balance < 0 ? "good" : "danger"} />
       </div>
       {warnings.length > 0 && <Notice tone="warn" title="Check these before you file" items={warnings} />}
+      <Card
+        title="CRA forms, filled"
+        action={
+          <button className={btnPrimary} onClick={downloadPdf} disabled={pdfBusy || !isSupportedYear(year)} title={isSupportedYear(year) ? undefined : `The CRA has not published ${year} forms yet`}>
+            {pdfBusy ? "Filling the forms…" : isSupportedYear(year) ? "Download the filled return (PDF)" : `No ${year} forms yet`}
+          </button>
+        }
+      >
+        <p className="text-sm text-ink-soft">
+          The CRA's own {year} forms — the T1, your {province === "QC" ? "federal return only" : `${province}428`}
+          {ret.rentals?.length ? ` and a T776 for each of your ${ret.rentals.length} propert${ret.rentals.length === 1 ? "y" : "ies"}` : ""} — filled with the values above, behind a one-page
+          checklist of what to attach and where to sign. Print it, sign page 8 of the T1, attach your slips, and mail it to your tax centre; or use it as the
+          reference while you type the same figures into certified software. Built on this device; nothing is uploaded.
+        </p>
+        {pdfMsg && <p className="mt-2 text-xs text-ink-soft">{pdfMsg}</p>}
+      </Card>
       <Card
         title="Line by line"
         action={

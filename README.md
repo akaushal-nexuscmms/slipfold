@@ -40,19 +40,25 @@ slips from a past year and compare line by line.
   donations (two-tier). Ontario surtax and health premium.
 - **Refund or balance:** tax withheld from every slip, CPP and EI overpayments across
   employers, instalments.
+- **Rental income (T776):** one statement per property — gross rents, the thirteen expense
+  lines, ownership share, personal-use split, capital cost allowance with the rule that it
+  cannot create a loss, UCC carried to next year. A rental loss reduces total income on line 12600.
+- **Filled CRA forms:** one click builds a print-ready PDF from the CRA's own fillable forms —
+  a filing checklist page, the T1, your province's 428 (fully line-by-line for Manitoba so far,
+  coded lines elsewhere) and a T776 per property — flattened and merged. Print, sign, attach
+  slips, mail. Nothing is uploaded; the forms are bundled under `public/forms/<year>/`.
 - **Next year:** unused RRSP contributions, estimated new RRSP room, federal and provincial
   tuition carry-forwards, net capital losses, FHSA room — and a one-click roll-forward
   that keeps your profile and issuers and clears the amounts.
 
-Not modelled (each is flagged in the app where relevant): the T2125 itself, T776 rental,
-child care (T778), moving expenses, minimum tax, foreign tax credits, provincial low-income
+Not modelled (each is flagged in the app where relevant): the T2125 itself, child care (T778), moving expenses, minimum tax, foreign tax credits, provincial low-income
 reductions and MB479-style refundable credits, Quebec's provincial return.
 
 ## Every number has a source
 
 Each year's rules file holds every rate, threshold and amount with the page it was checked
 against (the CRA 428 forms for every province, CRA payroll and CPP announcements, TaxTips tables).
-`scripts/smoke.ts` checks the engine against hand-computed returns — ~130 assertions across
+`scripts/smoke.ts` checks the engine against hand-computed returns — ~150 assertions across
 Manitoba, Ontario, BC, Alberta, Saskatchewan and Quebec profiles, multi-employer CPP/EI
 overpayments, dividends, capital gains and losses, tuition carry-forward, seniors, and the
 roll-forward.
