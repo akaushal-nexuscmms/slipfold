@@ -47,12 +47,22 @@ slips from a past year and compare line by line.
   a filing checklist page, the T1, your province's 428 (fully line-by-line for Manitoba so far,
   coded lines elsewhere) and a T776 per property — flattened and merged. Print, sign, attach
   slips, mail. Nothing is uploaded; the forms are bundled under `public/forms/<year>/`.
+- **Every field on the forms:** a page that lists every fillable box on the T1 (both years),
+  the MB428 and the T776 — the ones the app derives are shown with where they come from; the
+  rest are yours to type if they apply: OAS and CPP benefits, split-pension, support payments,
+  child care, moving, caregiver amounts, transfers from a spouse or child, foreign tax credit,
+  political contributions, refundable credits, the Elections Canada and foreign-property
+  questions, email and phone, a deceased person's date of death. Typed amounts join the right
+  total (income, deduction, credit amount, tax credit, refundable) so the return stays
+  consistent; the return page and the PDF checklist mark them as typed, not verified.
 - **Next year:** unused RRSP contributions, estimated new RRSP room, federal and provincial
   tuition carry-forwards, net capital losses, FHSA room — and a one-click roll-forward
   that keeps your profile and issuers and clears the amounts.
 
-Not modelled (each is flagged in the app where relevant): the T2125 itself, child care (T778), moving expenses, minimum tax, foreign tax credits, provincial low-income
-reductions and MB479-style refundable credits, Quebec's provincial return.
+Not computed (you type the result of the form named on the line, and the app carries it):
+the T2125, T778, T1-M, T2209, T691, Schedule 5/6/12/13 amounts, the 428 lines of provinces
+other than Manitoba, MB479-style refundable credits (line 47900 takes the total), Quebec's
+provincial return.
 
 ## Every number has a source
 

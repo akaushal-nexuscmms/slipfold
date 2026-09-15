@@ -3,6 +3,7 @@
 
 import { getRules, marginalRate, round2, taxOn, type ProvinceRules, type YearRules } from "./rules.ts";
 import { CCA_CLASS1_RATE, RENTAL_EXPENSES, num, type RentalProperty, type Slip, type TaxReturn } from "./model.ts";
+import { MB428_FIELDS, T1_FIELDS, fieldsForYear, type FormFieldDef, type Role } from "./formFields.ts";
 
 export type Section = "income" | "deductions" | "taxable" | "fedCredits" | "fedTax" | "provincial" | "refund" | "carry";
 
@@ -78,6 +79,14 @@ export function compute(ret: TaxReturn): Result {
   const L: Line[] = [];
   const warnings: string[] = [];
   const push = (l: Omit<Line, "from"> & { from?: string[] }) => L.push({ from: [], ...l });
+  // Amounts typed on the "Every field" page (formFields.ts). Each joins a total through its role;
+  // the app does not check them against slips or schedules — that is said on every such line.
+  const F = ret.form ?? {};
+  const fv = (key: string) => round2(num(F[key] as number));
+  const manual = fieldsForYear(T1_FIELDS, ret.year).filter((f) => !f.auto && f.kind === "money" && fv(f.key) !== 0);
+  const byRole = (role: Role) => manual.filter((f) => f.role === role);
+  const sumRole = (role: Role) => round2(byRole(role).reduce((s, f) => s + fv(f.key), 0));
+  const pushManual = (f: FormFieldDef, section: Section) => push({ line: f.line ?? f.key, form: "T1", label: f.label, value: fv(f.key), section, from: ["Typed on the Every field page"], explain: f.help, note: "Entered by you; the app carries it into the totals but does not verify it against a slip or schedule." });
   const age = ageAtYearEnd(p.dateOfBirth, ret.year);
   const hasSpouse = p.maritalStatus === "married" || p.maritalStatus === "common-law";
   const quebec = p.province === "QC";
@@ -134,6 +143,15 @@ export function compute(ret: TaxReturn): Result {
   const taxableScholar = scholarships.total ? (fullTimeMonths > 0 ? 0 : Math.max(0, round2(scholarships.total - 500))) : 0;
   if (scholarships.total) push({ line: "13010", form: "T1", label: "Taxable scholarships, bursaries and fellowships", value: taxableScholar, section: "income", from: [...scholarships.parts, fullTimeMonths > 0 ? `Full-time months on T2202: ${fullTimeMonths} → fully exempt` : "No full-time months → first $500 exempt"], explain: "Scholarships are fully exempt when you were a full-time student in the year; otherwise the first $500 is exempt." });
 
+  // Lines typed on the Every field page: OAS, CPP benefits, split-pension, support, RRSP income, partnership, RDSP, FHSA…
+  for (const f of byRole("income")) pushManual(f, "income");
+  const manualIncome = sumRole("income");
+  for (const f of byRole("incomeReduce")) pushManual(f, "income");
+  const incomeReduce = sumRole("incomeReduce");
+  for (const f of byRole("otherPayment")) pushManual(f, "income");
+  const otherPayments = sumRole("otherPayment");
+  if (otherPayments) push({ line: "14700", form: "T1", label: "Workers' compensation, social assistance and net federal supplements (lines 14400 to 14600)", value: otherPayments, section: "income", from: byRole("otherPayment").map((f) => `${f.line}: ${money(fv(f.key))}`), explain: "Counted in total and net income (they affect benefits and credits) and deducted again on line 25000, so they are not taxed." });
+
   // Rental — T776, one statement per property; net can be negative and reduces total income
   let rentalGross = 0;
   let rentalNet = 0;
@@ -153,13 +171,17 @@ export function compute(ret: TaxReturn): Result {
     push({ line: "12600", form: "T1", label: "Net rental income (loss)", value: rentalNet, section: "income", always: true, from: ret.rentals.map((r) => `${r.address.trim() || "Rental"}: ${money(rental(r).net)}`), explain: rentalNet < 0 ? "Negative: the rental lost money after expenses, and the loss reduces your total income and your tax. Attach a T776 for each property." : "Net rental profit after expenses and any CCA, from your T776 statements." });
   }
 
-  const selfEmp = round2(num(o.selfEmploymentNet) + sumBox(slips, "t4a", "b020", "020").total);
-  if (selfEmp) push({ line: "13500", form: "T1", label: "Net self-employment income (business, professional, commission)", value: selfEmp, section: "income", from: [`Net from your T2125: ${money(o.selfEmploymentNet)}`, ...sumBox(slips, "t4a", "b020", "020").parts], explain: "The net figure from your own T2125 (this app does not prepare the T2125 itself). Enter it on the line matching the kind of business — 13500 business, 13700 professional, 13900 commission.", note: "You must complete a T2125 for the gross and expense detail." });
+  const selfEmpBusiness = round2(num(o.selfEmploymentNet) + sumBox(slips, "t4a", "b020", "020").total);
+  if (selfEmpBusiness) push({ line: "13500", form: "T1", label: "Net business income", value: selfEmpBusiness, section: "income", from: [`Net from your T2125: ${money(o.selfEmploymentNet)}`, ...sumBox(slips, "t4a", "b020", "020").parts], explain: "The net figure from your own T2125 (this app does not prepare the T2125 itself). Professional, commission, farming and fishing income have their own lines on the Every field page.", note: "You must complete a T2125 for the gross and expense detail." });
+  for (const f of byRole("selfEmployment")) pushManual(f, "income");
+  const selfEmp = round2(selfEmpBusiness + sumRole("selfEmployment")); // CPP on self-employment is computed on all of it
 
-  const totalIncome = round2(employment + num(o.otherEmploymentIncome) + t4a_016.total + t4e_14.total + dividends + interest + taxableGains + rentalNet + t4a_other + taxableScholar + selfEmp);
+  const totalIncome = round2(employment + num(o.otherEmploymentIncome) + t4a_016.total + t4e_14.total + dividends + interest + taxableGains + rentalNet + t4a_other + taxableScholar + selfEmp + manualIncome - incomeReduce + otherPayments);
   push({ line: "15000", form: "T1", label: "Total income", value: totalIncome, section: "income", always: true, explain: "Every income line added up." });
 
   // ---------------- Step 3: net income ----------------
+  const pa = sumBox(slips, "t4", "b52", "52");
+  if (pa.total) push({ line: "20600", form: "T1", label: "Pension adjustment (information only — not a deduction)", value: pa.total, section: "deductions", from: pa.parts, explain: "Printed on the return so the CRA can reduce next year's RRSP room. It is not subtracted from income." });
   const rpp = sumBox(slips, "t4", "b20", "20");
   if (rpp.total) push({ line: "20700", form: "T1", label: "Registered pension plan (RPP) deduction", value: rpp.total, section: "deductions", from: rpp.parts, explain: "T4 box 20. Payroll pension contributions come straight off income." });
 
@@ -225,7 +247,10 @@ export function compute(ret: TaxReturn): Result {
   const otherDed = round2(num(o.otherDeductions) + t4eRepay.total);
   if (otherDed) push({ line: "23200", form: "T1", label: "Other deductions", value: otherDed, section: "deductions", from: [...t4eRepay.parts, ...(o.otherDeductions ? [`Entered: ${money(o.otherDeductions)}`] : [])], explain: "EI repayments (T4E box 30) and other deductions with no line of their own." });
 
-  const totalDeductions = round2(rpp.total + rrspDeduct + fhsaDeduct + dues + num(o.carryingCharges) + seBaseHalf + enhancedDeduction + num(o.employmentExpenses) + otherDed);
+  for (const f of byRole("deduction")) pushManual(f, "deductions");
+  const manualDeductions = sumRole("deduction");
+  const socialRepayment = fv("23500"); // also added to total payable on line 42200
+  const totalDeductions = round2(rpp.total + rrspDeduct + fhsaDeduct + dues + num(o.carryingCharges) + seBaseHalf + enhancedDeduction + num(o.employmentExpenses) + otherDed + manualDeductions);
   push({ line: "23300", form: "T1", label: "Total deductions", value: totalDeductions, section: "deductions", always: true, explain: "Lines 20700 to 23200 added up." });
   const netIncome = round2(Math.max(0, totalIncome - totalDeductions));
   push({ line: "23600", form: "T1", label: "Net income", value: netIncome, section: "deductions", always: true, explain: "Total income minus deductions. This number sets benefits (GST/HST credit, CCB), the medical threshold, the age amount, and the spouse amount — it matters more than taxable income for most people." });
@@ -233,7 +258,11 @@ export function compute(ret: TaxReturn): Result {
   // ---------------- Step 4: taxable income ----------------
   const lossApplied = taxableGains > 0 ? Math.min(taxableGains, num(carry.netCapitalLosses)) : 0;
   if (lossApplied) push({ line: "25300", form: "T1", label: "Net capital losses of other years", value: round2(lossApplied), section: "taxable", from: [`Losses carried forward ${money(carry.netCapitalLosses)}`, `Taxable gains this year ${money(taxableGains)}`], explain: "Old capital losses can only offset capital gains, never salary. Applied up to this year's taxable gains; the rest keeps carrying forward." });
-  const taxableIncome = round2(Math.max(0, netIncome - lossApplied));
+  if (otherPayments) push({ line: "25000", form: "T1", label: "Other payments deduction (amount from line 14700)", value: otherPayments, section: "taxable", from: [`Line 14700: ${money(otherPayments)}`], explain: "Workers' compensation, social assistance and net federal supplements come back out here, so they are never taxed.", note: fv("14600") ? "The form sends you to the Federal Worksheet when line 14600 has an amount; the app used the full line 14700." : undefined });
+  for (const f of byRole("taxableDeduction")) pushManual(f, "taxable");
+  for (const f of byRole("taxableAdd")) pushManual(f, "taxable");
+  const manualTaxable = round2(sumRole("taxableDeduction") + otherPayments - sumRole("taxableAdd"));
+  const taxableIncome = round2(Math.max(0, netIncome - lossApplied - manualTaxable));
   push({ line: "26000", form: "T1", label: "Taxable income", value: taxableIncome, section: "taxable", always: true, explain: "What the tax brackets are applied to." });
 
   // ---------------- Step 5: federal non-refundable credits ----------------
@@ -265,11 +294,20 @@ export function compute(ret: TaxReturn): Result {
   if (p.disabilityCertified) push({ line: "31600", form: "T1", label: "Disability amount (self)", value: FEDERAL.disabilityAmount, section: "fedCredits", from: ["T2201 approved"], explain: "Only with a T2201 the CRA has approved." });
   if (o.studentLoanInterest) push({ line: "31900", form: "T1", label: "Interest paid on your student loans", value: round2(o.studentLoanInterest), section: "fedCredits", from: [`Entered ${money(o.studentLoanInterest)}`], explain: "Government student loan interest only (not a bank line of credit). Unused amounts carry forward five years." });
 
+  // Credit amounts typed on the Every field page (eligible dependant, caregiver, volunteer amounts, transfers…)
+  for (const f of byRole("creditAmount")) pushManual(f, "fedCredits");
+  const caregiverChildren = Math.max(0, Math.floor(num(F["30499"] as number)));
+  const caregiverChildAmt = round2(caregiverChildren * FEDERAL.caregiverChildAmount);
+  if (caregiverChildAmt) push({ line: "30500", form: "T1", label: "Canada caregiver amount for infirm children under 18 years of age", value: caregiverChildAmt, section: "fedCredits", from: [`${caregiverChildren} child${caregiverChildren === 1 ? "" : "ren"} (line 30499) × ${money(FEDERAL.caregiverChildAmount)}`], explain: "The per-child amount printed on the form, times the number of infirm children you claimed on line 30499." });
+  if (hasSpouse && fv("30400")) warnings.push("You have a spouse or partner and also typed an amount for an eligible dependant (line 30400) — the T1 allows only one of lines 30300 and 30400.");
+  const manualCreditAmounts = round2(sumRole("creditAmount") + caregiverChildAmt);
+
   // Tuition — Schedule 11: use only what is needed to zero federal tax, carry the rest
   const tuitionThisYear = sumBox(slips, "t2202", "b23", "23");
   const tuitionAvailFed = round2(tuitionThisYear.total + num(carry.tuitionFederal));
-  const creditsBeforeTuition = fedBpa + fedAge + fedSpouse + cppBase + seBaseHalf + eiAllowed + cea + (o.homeBuyer ? FEDERAL.homeBuyersAmount : 0) + digital + pensionAmt + (p.disabilityCertified ? FEDERAL.disabilityAmount : 0) + num(o.studentLoanInterest);
-  const fedTaxGross = taxOn(taxableIncome, FEDERAL.brackets);
+  const creditsBeforeTuition = fedBpa + fedAge + fedSpouse + cppBase + seBaseHalf + eiAllowed + cea + (o.homeBuyer ? FEDERAL.homeBuyersAmount : 0) + digital + pensionAmt + (p.disabilityCertified ? FEDERAL.disabilityAmount : 0) + num(o.studentLoanInterest) + manualCreditAmounts;
+  const tosi = fv("40424");
+  const fedTaxGross = round2(taxOn(taxableIncome, FEDERAL.brackets) + tosi); // line 40400 = tax on taxable income plus tax on split income
   const tuitionNeededFed = Math.max(0, round2(fedTaxGross / FEDERAL.creditRate - creditsBeforeTuition));
   const tuitionUsedFed = round2(Math.min(tuitionAvailFed, tuitionNeededFed));
   const tuitionCarryFed = round2(tuitionAvailFed - tuitionUsedFed);
@@ -288,30 +326,69 @@ export function compute(ret: TaxReturn): Result {
   const donationsClaim = Math.min(donationsTotal, round2(netIncome * FEDERAL.donations.incomeLimitShare));
   const donationCredit = donationsClaim ? round2(Math.min(donationsClaim, FEDERAL.donations.firstTier) * FEDERAL.donations.firstRate + Math.max(0, donationsClaim - FEDERAL.donations.firstTier) * FEDERAL.donations.secondRate) : 0;
   if (donationsTotal) push({ line: "34900", form: "T1", label: "Donations and gifts (credit)", value: donationCredit, section: "fedCredits", from: [`Receipts ${money(o.donations)}`, ...sumBox(slips, "t4", "b46", "46").parts, `First $200 × 14.5% + remainder × 29%`], explain: "This line is the credit itself, not the donation. Two-tier: 14.5% on the first $200, 29% above it. Combining spouses' receipts on one return, or saving small receipts up to five years, gets more into the 29% tier." });
-  const fedNonRefundable = round2(creditsAtRate + donationCredit);
-  push({ line: "35000", form: "T1", label: "Total federal non-refundable tax credits", value: fedNonRefundable, section: "fedCredits", always: true, explain: "Line 33800 plus the donation credit." });
+  for (const f of byRole("credit")) pushManual(f, "fedCredits");
+  const fedNonRefundable = round2(creditsAtRate + donationCredit + sumRole("credit"));
+  push({ line: "35000", form: "T1", label: "Total federal non-refundable tax credits", value: fedNonRefundable, section: "fedCredits", always: true, explain: "Line 33800 plus the donation credit (and the top-up credit, if any)." });
 
   // ---------------- Part B: federal tax ----------------
-  push({ line: "40400", form: "T1", label: "Federal tax on taxable income", value: fedTaxGross, section: "fedTax", always: true, from: FEDERAL.brackets.map((b, i) => { const lo = i ? FEDERAL.brackets[i - 1].upTo : 0; const slice = Math.max(0, Math.min(taxableIncome, b.upTo) - lo); return slice ? `${money(slice)} × ${pct(b.rate)} = ${money(round2(slice * b.rate))}` : ""; }).filter(Boolean), explain: "Bracket by bracket. Only the income inside each bracket is taxed at that bracket's rate." });
+  if (tosi) pushManual(manual.find((f) => f.key === "40424")!, "fedTax");
+  push({ line: "40400", form: "T1", label: tosi ? "Federal tax on taxable income plus tax on split income" : "Federal tax on taxable income", value: fedTaxGross, section: "fedTax", always: true, from: [...FEDERAL.brackets.map((b, i) => { const lo = i ? FEDERAL.brackets[i - 1].upTo : 0; const slice = Math.max(0, Math.min(taxableIncome, b.upTo) - lo); return slice ? `${money(slice)} × ${pct(b.rate)} = ${money(round2(slice * b.rate))}` : ""; }).filter(Boolean), ...(tosi ? [`+ tax on split income ${money(tosi)}`] : [])], explain: "Bracket by bracket. Only the income inside each bracket is taxed at that bracket's rate." });
   const afterCredits = round2(Math.max(0, fedTaxGross - fedNonRefundable));
-  push({ line: "40600", form: "T1", label: "Federal tax after non-refundable credits", value: afterCredits, section: "fedTax", always: true, explain: "Cannot go below zero — non-refundable credits never produce a refund on their own." });
   const dtc = round2(eligTaxable * FEDERAL.dividend.eligible.credit + nonTaxable * FEDERAL.dividend.nonEligible.credit);
   const dtcUsed = Math.min(dtc, afterCredits);
   if (dtc) push({ line: "40425", form: "T1", label: "Federal dividend tax credit", value: round2(dtcUsed), section: "fedTax", from: [`Eligible ${money(eligTaxable)} × 15.0198%`, `Non-eligible ${money(nonTaxable)} × 9.0301%`], explain: "Gives back the corporate tax already paid on dividends. Non-refundable, so it stops at zero tax." });
-  const basicFederal = round2(Math.max(0, afterCredits - dtcUsed));
+  const minTaxCarry = Math.min(fv("40427"), round2(afterCredits - dtcUsed));
+  if (minTaxCarry) pushManual(manual.find((f) => f.key === "40427")!, "fedTax");
+  const basicFederal = round2(Math.max(0, afterCredits - dtcUsed - minTaxCarry));
+  push({ line: "42900", form: "T1", label: "Basic federal tax", value: basicFederal, section: "fedTax", always: true, explain: "Line 40400 minus non-refundable credits, the dividend tax credit and any minimum tax carryover. Cannot go below zero — non-refundable credits never produce a refund on their own." });
   const abatement = quebec ? round2(basicFederal * FEDERAL.quebecAbatement) : 0;
   if (quebec) push({ line: "44000", form: "T1", label: "Refundable Quebec abatement", value: abatement, section: "refund", from: [`Basic federal tax ${money(basicFederal)} × 16.5%`], explain: "Quebec residents get 16.5% of basic federal tax back because Quebec runs its own programs. It appears with the refundable credits." });
-  const netFederal = basicFederal;
-  push({ line: "42000", form: "T1", label: "Net federal tax", value: netFederal, section: "fedTax", always: true, explain: "Federal tax after every credit. (Minimum tax and foreign tax credits are not modelled.)" });
+  // lines 127–134 of the form: surtax outside Canada, foreign tax credit, ITC recapture, logging credit
+  const surtaxOutside = fv("surtaxOutsideCanada");
+  if (surtaxOutside) pushManual(manual.find((f) => f.key === "surtaxOutsideCanada")!, "fedTax");
+  const foreignTaxCredit = Math.min(fv("40500"), round2(basicFederal + surtaxOutside));
+  if (foreignTaxCredit) pushManual(manual.find((f) => f.key === "40500")!, "fedTax");
+  const itcRecapture = fv("itcRecapture");
+  if (itcRecapture) pushManual(manual.find((f) => f.key === "itcRecapture")!, "fedTax");
+  const loggingCredit = Math.min(fv("loggingCredit"), round2(basicFederal + surtaxOutside - foreignTaxCredit + itcRecapture));
+  if (loggingCredit) pushManual(manual.find((f) => f.key === "loggingCredit")!, "fedTax");
+  const federalTax = round2(Math.max(0, basicFederal + surtaxOutside - foreignTaxCredit + itcRecapture - loggingCredit));
+  push({ line: "40600", form: "T1", label: "Federal tax", value: federalTax, section: "fedTax", always: true, explain: "Basic federal tax after the foreign tax credit and the other line 127–133 adjustments (all zero for most people)." });
+  // lines 135–141: political, investment and labour-sponsored credits; then advanced CWB and special taxes
+  for (const key of ["41000", "41200", "41400"]) if (fv(key)) pushManual(manual.find((f) => f.key === key)!, "fedTax");
+  const otherFedCredits = Math.min(round2(fv("41000") + fv("41200") + fv("41400")), federalTax);
+  const line41700 = round2(federalTax - otherFedCredits);
+  for (const key of ["41500", "41800"]) if (fv(key)) pushManual(manual.find((f) => f.key === key)!, "fedTax");
+  const netFederal = round2(line41700 + fv("41500") + fv("41800"));
+  push({ line: "42000", form: "T1", label: "Net federal tax", value: netFederal, section: "fedTax", always: true, explain: "Federal tax after every credit, plus any advanced Canada workers benefit received and special taxes. (Alternative minimum tax itself is not modelled.)" });
   if (seCpp) push({ line: "42100", form: "T1", label: "CPP contributions payable on self-employment income", value: round2(seCpp + seCpp2), section: "fedTax", from: [`Base+enhanced ${money(seCpp)}`, ...(seCpp2 ? [`CPP2 ${money(seCpp2)}`] : [])], explain: "Both halves of CPP on business income are paid with your return rather than through payroll." });
+  const eiSelf = fv("42120");
+  if (eiSelf) pushManual(manual.find((f) => f.key === "42120")!, "fedTax");
+  if (socialRepayment) push({ line: "42200", form: "T1", label: "Social benefits repayment (amount from line 23500)", value: socialRepayment, section: "fedTax", from: [`Line 23500: ${money(socialRepayment)}`], explain: "The EI or OAS clawback you deducted on line 23500 is paid back here, with your return." });
 
   // ---------------- Provincial 428 ----------------
-  const provTax = quebec ? { tax: 0, refundable: 0, tuitionCarry: round2(tuitionThisYear.total + num(carry.tuitionProvincial)), warnings: [] as string[] } : computeProvince(prov, { taxableIncome, netIncome, age, hasSpouse, spouseNet: num(p.spouseNetIncome), cea, homeBuyer: o.homeBuyer, cppBase: round2(cppBase + seBaseHalf), ei: round2(eiAllowed), pension: t4a_016.total, disability: p.disabilityCertified, studentLoan: num(o.studentLoanInterest), tuitionNew: tuitionThisYear.total, tuitionCarry: num(carry.tuitionProvincial), medicalExpenses: num(o.medicalExpenses), donations: donationsClaim, eligTaxable, nonTaxable }, L);
+  // Manitoba: extra 428 lines typed on the Every field page, plus the two the form derives from the T1
+  const extra: ProvExtra = { creditAmounts: [], taxAdd: [], earlyTaxCredits: [], taxAddAfter: [], taxCredits: [] };
+  if (p.province === "MB") {
+    const mbNote = "Entered by you on the Every field page; carried into the MB428 totals, not verified.";
+    for (const f of MB428_FIELDS) {
+      const v = f.auto ? 0 : fv(f.key);
+      if (!v || f.kind !== "money") continue;
+      const item = { line: f.line ?? f.key, label: f.label, value: v, explain: f.help, note: mbNote };
+      if (f.role === "provCreditAmount") extra.creditAmounts.push(item);
+      else if (f.role === "provTaxAdd") extra.taxAdd.push(item);
+      else if (f.role === "provTaxAddAfter") extra.taxAddAfter.push(item);
+      else if (f.role === "provTaxCredit") extra.taxCredits.push(item);
+    }
+    if (fv("31217")) extra.creditAmounts.push({ line: "58305", label: "EI premiums on self-employment and other eligible earnings", value: fv("31217"), explain: "Amount from line 31217 of your return (MB428 line 22)." });
+    if (minTaxCarry) extra.earlyTaxCredits.push({ line: "61540", label: "Manitoba minimum tax carryover", value: round2(minTaxCarry * 0.5), explain: "Amount from line 40427 of your return × 50% (MB428 line 63)." });
+  }
+  const provTax = quebec ? { tax: 0, refundable: 0, tuitionCarry: round2(tuitionThisYear.total + num(carry.tuitionProvincial)), warnings: [] as string[] } : computeProvince(prov, { taxableIncome, netIncome, age, hasSpouse, spouseNet: num(p.spouseNetIncome), cea, homeBuyer: o.homeBuyer, cppBase: round2(cppBase + seBaseHalf), ei: round2(eiAllowed), pension: t4a_016.total, disability: p.disabilityCertified, studentLoan: num(o.studentLoanInterest), tuitionNew: tuitionThisYear.total, tuitionCarry: num(carry.tuitionProvincial), medicalExpenses: num(o.medicalExpenses), donations: donationsClaim, eligTaxable, nonTaxable, extra }, L);
   if (quebec) push({ line: "42800", form: "T1", label: "Provincial tax", value: 0, section: "provincial", always: true, explain: "Quebec residents file a separate provincial return (TP-1) with Revenu Québec; nothing goes on line 42800. This app computes the federal side only for Quebec.", note: "File the TP-1 with Revenu Québec." });
   else push({ line: "42800", form: "T1", label: `${prov.name} tax (from form ${prov.form})`, value: provTax.tax, section: "provincial", always: true, explain: `Carried from line ${prov.finalLine} of the ${prov.form}.` });
 
-  const totalPayable = round2(netFederal + seCpp + seCpp2 + provTax.tax);
-  push({ line: "43500", form: "T1", label: "Total payable", value: totalPayable, section: "refund", always: true, explain: "Federal tax + CPP on self-employment + provincial tax." });
+  const totalPayable = round2(netFederal + seCpp + seCpp2 + eiSelf + socialRepayment + provTax.tax);
+  push({ line: "43500", form: "T1", label: "Total payable", value: totalPayable, section: "refund", always: true, explain: "Net federal tax + CPP (and any EI) on self-employment + social benefits repayment + provincial tax." });
 
   // ---------------- refund / balance ----------------
   const withheld = round2(sumBox(slips, "t4", "b22", "22").total + sumBox(slips, "t4a", "b022", "022").total + sumBox(slips, "t4e", "b22", "22").total);
@@ -319,7 +396,11 @@ export function compute(ret: TaxReturn): Result {
   if (cppOver) push({ line: "44800", form: "T1", label: "CPP overpayment", value: cppOver, section: "refund", from: cppPaid.parts, explain: "Contributions above the annual maximum, refunded." });
   if (eiOver) push({ line: "45000", form: "T1", label: "Employment insurance overpayment", value: eiOver, section: "refund", from: eiPaid.parts, explain: "Premiums above the annual maximum, refunded." });
   if (o.instalmentsPaid) push({ line: "47600", form: "T1", label: "Tax paid by instalments", value: round2(o.instalmentsPaid), section: "refund", from: [`Entered ${money(o.instalmentsPaid)}`], explain: "Quarterly instalments you paid the CRA during the year." });
-  const totalCredits = round2(withheld + cppOver + eiOver + num(o.instalmentsPaid) + abatement + provTax.refundable);
+  for (const f of byRole("refundable")) pushManual(f, "refund");
+  const educator = round2(fv("46800") * 0.25);
+  if (educator) push({ line: "46900", form: "T1", label: "Eligible educator school supply tax credit", value: educator, section: "refund", from: [`Supplies ${money(fv("46800"))} × 25%`], explain: "A quarter of what you spent on classroom supplies, as the form computes it. Refundable." });
+  const manualRefundable = round2(sumRole("refundable") + educator);
+  const totalCredits = round2(withheld + cppOver + eiOver + num(o.instalmentsPaid) + abatement + provTax.refundable + manualRefundable);
   push({ line: "48200", form: "T1", label: "Total credits", value: totalCredits, section: "refund", always: true, explain: "Tax already paid plus refundable credits." });
   const balance = round2(totalPayable - totalCredits);
   push({ line: balance < 0 ? "48400" : "48500", form: "T1", label: balance < 0 ? "Refund" : "Balance owing", value: Math.abs(balance), section: "refund", always: true, explain: balance < 0 ? "Total credits exceed total payable — the CRA sends the difference." : "Due April 30. Interest starts the next day; if you cannot pay, file anyway to avoid the late-filing penalty." });
@@ -407,13 +488,21 @@ type ProvInputs = {
   donations: number;
   eligTaxable: number;
   nonTaxable: number;
+  extra?: ProvExtra;
 };
+
+type ProvItem = { line: string; label: string; value: number; explain: string; note?: string };
+/** 428 lines the app does not derive itself, typed by the user (MB428 today) — see formFields.ts. */
+export type ProvExtra = { creditAmounts: ProvItem[]; taxAdd: ProvItem[]; earlyTaxCredits: ProvItem[]; taxAddAfter: ProvItem[]; taxCredits: ProvItem[] };
 
 function computeProvince(r: ProvinceRules, i: ProvInputs, L: Line[]) {
   const push = (l: Omit<Line, "from" | "form" | "section"> & { from?: string[] }) => L.push({ from: [], form: "428", section: "provincial", ...l });
   const warnings: string[] = [];
-  const gross = taxOn(i.taxableIncome, r.brackets);
-  push({ line: r.lines.tax, label: `${r.name} tax on taxable income`, value: gross, always: true, from: r.brackets.map((b, k) => { const lo = k ? r.brackets[k - 1].upTo : 0; const slice = Math.max(0, Math.min(i.taxableIncome, b.upTo) - lo); return slice ? `${money(slice)} × ${pct(b.rate)}` : ""; }).filter(Boolean), explain: `${r.name}'s own brackets applied to the same taxable income.` });
+  const x: ProvExtra = i.extra ?? { creditAmounts: [], taxAdd: [], earlyTaxCredits: [], taxAddAfter: [], taxCredits: [] };
+  const grossOnIncome = taxOn(i.taxableIncome, r.brackets);
+  for (const t of x.taxAdd) push({ line: t.line, label: t.label, value: t.value, explain: t.explain, note: t.note, from: ["Typed on the Every field page"] });
+  const gross = round2(grossOnIncome + x.taxAdd.reduce((s, t) => s + t.value, 0));
+  push({ line: r.lines.tax, label: `${r.name} tax on taxable income`, value: grossOnIncome, always: true, from: r.brackets.map((b, k) => { const lo = k ? r.brackets[k - 1].upTo : 0; const slice = Math.max(0, Math.min(i.taxableIncome, b.upTo) - lo); return slice ? `${money(slice)} × ${pct(b.rate)}` : ""; }).filter(Boolean), explain: `${r.name}'s own brackets applied to the same taxable income.` });
 
   let bpa = r.bpa.max;
   if (r.bpa.phaseStart !== undefined && r.bpa.phaseEnd !== undefined && i.netIncome > r.bpa.phaseStart) {
@@ -439,7 +528,8 @@ function computeProvince(r: ProvinceRules, i: ProvInputs, L: Line[]) {
   if (i.disability) push({ line: "58440", label: "Disability amount (self)", value: r.disabilityAmount, explain: "With an approved T2201." });
   if (i.studentLoan) push({ line: "58520", label: "Interest paid on student loans", value: round2(i.studentLoan), explain: "Same as federal line 31900." });
 
-  const before = bpa + ageAmt + spouse + seniorSupp + provHomeBuyer + provCea + i.cppBase + i.ei + pension + (i.disability ? r.disabilityAmount : 0) + i.studentLoan;
+  for (const t of x.creditAmounts) push({ line: t.line, label: t.label, value: t.value, explain: t.explain, note: t.note, from: t.note ? ["Typed on the Every field page"] : [] });
+  const before = bpa + ageAmt + spouse + seniorSupp + provHomeBuyer + provCea + i.cppBase + i.ei + pension + (i.disability ? r.disabilityAmount : 0) + i.studentLoan + x.creditAmounts.reduce((s, t) => s + t.value, 0);
   const tuitionAvail = round2(i.tuitionNew + i.tuitionCarry);
   const tuitionNeeded = Math.max(0, round2(gross / r.creditRate - before));
   const tuitionUsed = round2(Math.min(tuitionAvail, tuitionNeeded));
@@ -464,6 +554,11 @@ function computeProvince(r: ProvinceRules, i: ProvInputs, L: Line[]) {
     tax = round2(tax - dtcUsed);
   };
   if (!r.surtaxBeforeDividendCredit) applyDtc();
+  // typed 428 lines: minimum-tax carryover first, then additions after credits, then the remaining credits in form order
+  const takeCredit = (t: ProvItem) => { const used = Math.min(t.value, tax); if (used > 0) push({ line: t.line, label: t.label, value: used, explain: t.explain, note: t.note, from: t.note ? ["Typed on the Every field page"] : [] }); tax = round2(tax - used); };
+  x.earlyTaxCredits.forEach(takeCredit);
+  for (const t of x.taxAddAfter) { push({ line: t.line, label: t.label, value: t.value, explain: t.explain, note: t.note, from: ["Typed on the Every field page"] }); tax = round2(tax + t.value); }
+  x.taxCredits.forEach(takeCredit);
 
   // Low-income tax reductions (BC, NB, NL): after credits and the dividend credit, floor 0.
   if (r.lowIncome && tax > 0) {

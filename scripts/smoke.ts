@@ -303,6 +303,61 @@ eq("rollForward: tuition carried", rollForward(stu).carry.tuitionFederal, 3289.2
   eq("pdf build: 2024 forms build too (2024 T776 is one page shorter)", b24.pages, 18);
 }
 
+// ---------- every field on the forms: typed lines join the totals ----------
+// Hand calculation (2025, Manitoba, the worked example plus typed lines):
+//  income 60,000 + OAS 6,001 (11300) + WCB 2,000 (14400 → 14700) = 68,001
+//  deductions RRSP 5,000 + enhanced CPP 565 + child care 3,000 (21400) + social benefits repayment 500 (23500) = 9,065 → 23600 = 58,936
+//  25000 = 14700 = 2,000 → 26000 = 56,936 → federal tax 56,936 × 14.5% = 8,255.72
+//  credit amounts BPA 16,129 + CPP base 2,796.75 + EI 984 + CEA 1,471 + caregiver children 2 × 2,687 = 5,374 → 26,754.75 × 14.5% = 3,879.44; + donations 58 → 35000 = 3,937.44
+//  42900 = 8,255.72 − 3,937.44 = 4,318.28; − foreign tax credit 100 → 40600 = 4,218.28; − political credit 50 → 42000 = 4,168.28
+//  Manitoba 6,342.84 − (19,560.75 × 10.8% = 2,112.56 + donations 39.00) = 4,191.28; − labour-sponsored 75 (60800) → 4,116.28
+//  total payable 4,168.28 + 42200 500 + 4,116.28 = 8,784.56; credits 9,000 + educator 400 × 25% = 100 + provincial 479 credits 250 = 9,350 → refund 565.44
+{
+  const typed: TaxReturn = { ...EXAMPLE_RETURN, form: { "11300": 6001, "14400": 2000, "21400": 3000, "23500": 500, "30499": 2, "40500": 100, "41000": 50, "46800": 400, "47900": 250, "10105": 1000, "mb.60800": 75, email: "sam@example.ca", citizen: true, foreignProperty: false, language: "Français", maritalChange: "03-15" } };
+  const r = compute(typed);
+  eq("fields: OAS and WCB join total income (15000)", line(r, "15000"), 68001);
+  eq("fields: 14700 is the other-payments total and 25000 takes it back out", [line(r, "14700"), line(r, "25000")], [2000, 2000]);
+  eq("fields: child care and social benefits repayment deducted (23600)", line(r, "23600"), 58936);
+  eq("fields: taxable income (26000)", line(r, "26000"), 56936);
+  eq("fields: caregiver children 2 × 2,687 on line 30500", line(r, "30500"), 5374);
+  eq("fields: total federal credits (35000)", line(r, "35000"), 3937.44);
+  eq("fields: basic federal tax then foreign tax credit (42900, 40600)", [line(r, "42900"), line(r, "40600")], [4318.28, 4218.28]);
+  eq("fields: political credit then net federal tax (42000)", line(r, "42000"), 4168.28);
+  eq("fields: 42200 mirrors 23500", line(r, "42200"), 500);
+  eq("fields: Manitoba labour-sponsored credit off MB tax (line 82)", r.lines.find((l) => l.form === "428" && l.line === "82")?.value, 4116.28);
+  eq("fields: total payable (43500)", line(r, "43500"), 8784.56);
+  eq("fields: educator credit 25% of 46800, provincial 479 credits, refund", [line(r, "46900"), line(r, "47900"), line(r, "48400")], [100, 250, 565.44]);
+  eq("fields: memo line 10105 is not a computed line", line(r, "10105"), undefined);
+  eq("fields: typed lines are marked as unverified", r.lines.find((l) => l.line === "11300")?.note?.includes("Entered by you"), true);
+  const withBil = compute({ ...typed, form: { ...typed.form, "21700": 1234 } });
+  eq("fields: a typed business investment loss (21700) is deducted too", [line(withBil, "21700"), line(withBil, "23600")], [1234, 58936 - 1234]);
+  // digital news: 2024 has line 31350, 2025 does not
+  const dn = { ...EXAMPLE_RETURN, other: { ...EXAMPLE_RETURN.other, digitalNews: 100 } };
+  eq("fields: no line 31350 on a 2025 return (credit ended with 2024)", line(compute(dn), "31350"), undefined);
+  eq("fields: line 31350 still on a 2024 return", line(compute({ ...dn, year: 2024 }), "31350"), 100);
+  // PDF plan: answers, radio, dates, memo lines, custom field names, MB428 chain, T776 co-owners
+  const plan = fieldValues(typed, r);
+  eq("pdf fields: Elections yes box and foreign-property No box ticked", [plan.t1Checks.includes("LineA[0].Option1[0].A_CheckBox[0]"), plan.t1Checks.includes("Line26600[0].Option2[0].ForeignProperty_CheckBox[0]")], [true, true]);
+  eq("pdf fields: language radio, email, marital-change month-day, memo line 10105", [plan.t1["RadioButtonlanguaget[0]"], plan.t1["EmailAddress[0]"], plan.t1["Identification[0].DateMMDD_Comb_BordersAll_Std[0].DateMMDD_Comb[0]"], plan.t1["Line_10105_Amount[0]"]], ["#1", "sam@example.ca", "0315", "1000.00"]);
+  eq("pdf fields: 30499 count and 30500 amount", [plan.t1["Line30499[0].Numeric_NoDecimal_BordersAll[0]"], plan.t1["Line_30500_Amount[0]"]], ["2", "5374.00"]);
+  eq("pdf fields: MB428 line 71 credit and the running total after it", [plan.p428?.["Line71[0].Amount[0]"], plan.p428?.["PartC[0].Line72[0].Amount[0]"], plan.p428?.["PartC[0].Line82[0].Amount[0]"]], ["75.00", "4116.28", "4116.28"]);
+  eq("pdf fields: typed lines listed in the notes and forms to attach", [plan.notes.some((n) => n.includes("line 11300 6001.00")), plan.attach.some((a) => a.includes("Form T778 for line 21400"))], [true, true]);
+  eq("pdf fields: line 21700 uses the form's irregular field name", fieldValues({ ...typed, form: { ...typed.form, "21700": 1234 } }, withBil).t1["Line45[0].Line_21900_Amount[0]"], "1234.00");
+  const rentalTyped: TaxReturn = { ...typed, rentals: [{ id: "r1", address: "12 Elm St", ownershipShare: 50, personalUsePct: 0, grossRents: 18000, otherIncome: 0, expenses: { interest: 9000 }, ucc: 0, additions: 0, ccaClaim: null, form: { coowner1Name: "Nishtha K, 12 Elm St", coowner1Pct: 50, coowner1Share: 4500, finalYear: "No", units: 2 } }] };
+  const rp = fieldValues(rentalTyped, compute(rentalTyped));
+  eq("pdf fields: T776 co-owner, units and final-year radio", [rp.t776[0]["P2_Frm_LnGrp1_inpt1[0]"], rp.t776[0]["P2_Frm_LnGrp1_inpt3[0]"], rp.t776[0]["P3_Frm_Row1_Cell2[0]"], rp.t776[0]["P1_Frm_Ln3_Grp2_op[0]"]], ["Nishtha K, 12 Elm St", "50", "2", "#1"]);
+  // a real build: every planned field lands on the forms
+  const built = await buildReturnPdf(rentalTyped, compute(rentalTyped), async (file) => new Uint8Array(readFileSync(`public/forms/2025/${file}`)));
+  eq("pdf fields: nothing missing on the 2025 forms", built.missing, []);
+  eq("pdf fields: many more fields filled than before", built.filled > 130, true);
+  const b24 = await buildReturnPdf({ ...rentalTyped, year: 2024, form: { ...rentalTyped.form, carbonRebateRural: true, "31350": 0 } }, compute({ ...rentalTyped, year: 2024 }), async (file) => new Uint8Array(readFileSync(`public/forms/2024/${file}`)));
+  eq("pdf fields: nothing missing on the 2024 forms either (SIN field, 21700, rate cell differ)", b24.missing, []);
+  writeFileSync(join(tmpdir(), "slipfold-smoke-fields.pdf"), built.bytes);
+  // roll-forward keeps answers and identification, never amounts
+  const next = rollForward(typed);
+  eq("fields: roll-forward keeps email, citizenship, language; drops the amounts", [next.form.email, next.form.citizen, next.form.language, next.form["11300"], next.form["mb.60800"]], ["sam@example.ca", true, "Français", undefined, undefined]);
+}
+
 // ---------- encryption at rest ----------
 {
   const { meta, key } = await createVault("correct horse battery staple");

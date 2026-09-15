@@ -2,7 +2,8 @@
 // Everything stays on the device. Export/import moves a JSON file the user controls — sealed
 // with the same passphrase when one is set.
 import Dexie, { type EntityTable } from "dexie";
-import { EMPTY_CARRY, EMPTY_OTHER, EMPTY_PROFILE, emptyReturn, newId, type Slip, type TaxReturn } from "./model.ts";
+import { EMPTY_CARRY, EMPTY_OTHER, EMPTY_PROFILE, emptyReturn, newId, type FormEntries, type Slip, type TaxReturn } from "./model.ts";
+import { MB428_FIELDS, T1_FIELDS, T776_FIELDS, recurringKeys } from "./formFields.ts";
 import { compute, rental } from "./engine.ts";
 import { createVault, deriveKey, isSealed, open, seal, unlockVault, type Sealed, type VaultMeta } from "./crypto.ts";
 
@@ -21,7 +22,9 @@ class Db extends Dexie {
 export const db = new Db();
 export type Key = CryptoKey | null;
 
-const normalise = (year: number, d: TaxReturn): TaxReturn => ({ ...emptyReturn(year), ...d, profile: { ...EMPTY_PROFILE, ...d.profile }, rentals: d.rentals ?? [], other: { ...EMPTY_OTHER, ...d.other }, carry: { ...EMPTY_CARRY, ...d.carry } });
+const normalise = (year: number, d: TaxReturn): TaxReturn => ({ ...emptyReturn(year), ...d, profile: { ...EMPTY_PROFILE, ...d.profile }, rentals: d.rentals ?? [], other: { ...EMPTY_OTHER, ...d.other }, carry: { ...EMPTY_CARRY, ...d.carry }, form: d.form ?? {} });
+
+const keep = (entries: FormEntries | undefined, keys: string[]): FormEntries => Object.fromEntries(Object.entries(entries ?? {}).filter(([k]) => keys.includes(k)));
 
 async function readRow(row: ReturnRow, key: Key): Promise<TaxReturn> {
   if (isSealed(row.data)) {
@@ -108,7 +111,8 @@ export function rollForward(from: TaxReturn): TaxReturn {
     year: from.year + 1,
     profile: { ...from.profile },
     slips,
-    rentals: (from.rentals ?? []).map((r) => ({ ...r, id: newId(), grossRents: 0, otherIncome: 0, expenses: {}, additions: 0, ccaClaim: null, ucc: rental(r).closingUcc })),
+    rentals: (from.rentals ?? []).map((r) => ({ ...r, id: newId(), grossRents: 0, otherIncome: 0, expenses: {}, additions: 0, ccaClaim: null, ucc: rental(r).closingUcc, form: keep(r.form, recurringKeys(T776_FIELDS)) })),
+    form: keep(from.form, recurringKeys([...T1_FIELDS, ...MB428_FIELDS])), // answers and identification recur; amounts never do
     other: { ...EMPTY_OTHER, homeBuyer: false, rrspDeductToClaim: null, unionDuesNotOnT4: from.other.unionDuesNotOnT4, digitalNews: from.other.digitalNews },
     carry: {
       rrspDeductionLimit: 0, // comes from the new Notice of Assessment

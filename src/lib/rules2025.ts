@@ -51,7 +51,8 @@ export const FEDERAL = {
   medicalThreshold: 2_834, // [F2][L1] lesser of this and 3% of net income
   medicalRate: 0.03,
   homeBuyersAmount: 10_000, // line 31270 — unchanged since 2022
-  digitalNewsMax: 500, // line 31350
+  digitalNewsMax: 0, // line 31350 does not exist on the 2025 T1 (5000-R E (25) page 6 runs 31300 → 31400); the credit ended with 2024
+  caregiverChildAmount: 2_687, // line 30500: 30499 × $2,687 (5000-R E (25) page 5)
   donations: { firstTier: 200, firstRate: 0.145, secondRate: 0.29, incomeLimitShare: 0.75 }, // first $200 at the credit rate, remainder at 29% (33% slice for top-bracket income not modelled)
   dividend: {
     // [D1][D2] gross-up and federal dividend tax credit as a share of the *taxable* (grossed-up) amount

@@ -197,6 +197,7 @@ export type RentalProperty = {
   ucc: number; // undepreciated capital cost of the building(s), start of year (Class 1)
   additions: number; // capital additions this year (building cost, not land; renovations that are capital)
   ccaClaim: number | null; // null = claim the maximum allowed
+  form?: FormEntries; // T776 identification and co-owner fields (formFields.ts T776_FIELDS)
 };
 
 export const RENTAL_EXPENSES: BoxDef[] = [
@@ -217,6 +218,9 @@ export const RENTAL_EXPENSES: BoxDef[] = [
 
 export const CCA_CLASS1_RATE = 0.04; // T4036: Class 1 buildings, declining balance
 
+/** Values typed on the "Every field" page, keyed by formFields.ts key: money as number, answers as boolean, text as string. */
+export type FormEntries = Record<string, string | number | boolean>;
+
 export type TaxReturn = {
   year: number;
   profile: Profile;
@@ -224,6 +228,7 @@ export type TaxReturn = {
   rentals: RentalProperty[];
   other: Other;
   carry: Carryforwards;
+  form: FormEntries;
 };
 
 export const EMPTY_PROFILE: Profile = {
@@ -270,7 +275,7 @@ export const EMPTY_CARRY: Carryforwards = {
 };
 
 export function emptyReturn(year: number): TaxReturn {
-  return { year, profile: { ...EMPTY_PROFILE }, slips: [], rentals: [], other: { ...EMPTY_OTHER }, carry: { ...EMPTY_CARRY } };
+  return { year, profile: { ...EMPTY_PROFILE }, slips: [], rentals: [], other: { ...EMPTY_OTHER }, carry: { ...EMPTY_CARRY }, form: {} };
 }
 
 export function newRental(): RentalProperty {
@@ -308,4 +313,5 @@ export const EXAMPLE_RETURN: TaxReturn = {
   rentals: [],
   other: { ...EMPTY_OTHER, donations: 300 },
   carry: { ...EMPTY_CARRY, rrspDeductionLimit: 12000 },
+  form: {},
 };

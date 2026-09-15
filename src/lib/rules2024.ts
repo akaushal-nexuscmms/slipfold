@@ -30,7 +30,8 @@ const FEDERAL: YearRules["FEDERAL"] = {
   medicalThreshold: 2_759, // [F24]
   medicalRate: 0.03,
   homeBuyersAmount: 10_000,
-  digitalNewsMax: 500,
+  digitalNewsMax: 500, // [F24] line 31350 (maximum $500) — last year of the credit
+  caregiverChildAmount: 2_616, // [F24] line 30500: 30499 × $2,616
   donations: { firstTier: 200, firstRate: 0.15, secondRate: 0.29, incomeLimitShare: 0.75 },
   dividend: {
     eligible: { grossUp: 0.38, credit: 0.150198 }, // [D24]

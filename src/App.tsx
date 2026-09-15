@@ -2,19 +2,21 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { compute, rental, type Line, type Result, type Section } from "./lib/engine";
 import { EXAMPLE_RETURN, RENTAL_EXPENSES, SLIP_DEFS, emptyReturn, newRental, newSlip, num, type MaritalStatus, type RentalProperty, type Slip, type SlipKind, type TaxReturn } from "./lib/model";
 import { LATEST_YEAR, SUPPORTED_YEARS, getRules, isSupportedYear, type ProvinceCode } from "./lib/rules";
+import { MB428_FIELDS, T1_FIELDS, T776_FIELDS, fieldsForYear, isManual, type FormFieldDef } from "./lib/formFields";
 import { deleteYear, exportJson, getVaultMeta, isEncryptedBackup, listYears, loadReturn, parseImport, removePassphrase, rollForward, saveReturn, setPassphrase, unlock } from "./lib/store";
 import { forgetKey, recallKey, rememberKey, type VaultMeta } from "./lib/crypto";
 import { Caption, Card, CopyButton, Field, MoneyInput, Notice, btnGhost, btnIcon, btnPrimary, inputCls, money } from "./ui";
 
-type Tab = "profile" | "slips" | "rental" | "other" | "carry" | "return" | "next" | "backup";
+type Tab = "profile" | "slips" | "rental" | "other" | "fields" | "carry" | "return" | "next" | "backup";
 const TABS: { id: Tab; label: string }[] = [
   { id: "profile", label: "1 · You" },
   { id: "slips", label: "2 · Slips" },
   { id: "rental", label: "3 · Rental (T776)" },
   { id: "other", label: "4 · Other amounts" },
-  { id: "carry", label: "5 · From last year" },
-  { id: "return", label: "6 · Your return, line by line" },
-  { id: "next", label: "7 · Next year" },
+  { id: "fields", label: "5 · Every field on the forms" },
+  { id: "carry", label: "6 · From last year" },
+  { id: "return", label: "7 · Your return, line by line" },
+  { id: "next", label: "8 · Next year" },
   { id: "backup", label: "Backup" },
 ];
 
@@ -186,6 +188,7 @@ export default function App() {
         {tab === "slips" && <SlipsTab ret={ret} patch={patch} />}
         {tab === "rental" && <RentalTab ret={ret} patch={patch} />}
         {tab === "other" && <OtherTab ret={ret} patch={patch} />}
+        {tab === "fields" && <FieldsTab ret={ret} result={result} patch={patch} />}
         {tab === "carry" && <CarryTab ret={ret} patch={patch} />}
         {tab === "return" && <ReturnTab ret={ret} result={result} lines={result.lines} summary={result.summary} warnings={result.warnings} province={ret.profile.province} year={ret.year} />}
         {tab === "next" && <NextTab lines={result.lines} year={ret.year} onStart={startNextYear} />}
@@ -495,7 +498,7 @@ function OtherTab({ ret, patch }: { ret: TaxReturn; patch: (p: Partial<TaxReturn
           {M("medicalExpenses", "Medical expenses (line 33099)", "Total eligible expenses for any 12-month period ending in the tax year — prescriptions, dental, glasses, premiums for private health plans. Only the amount above the threshold counts; the app subtracts it.")}
           {M("donations", "Charitable donations with receipts (line 34900)", "Registered charities only. T4 box 46 is added automatically. Receipts under $200 total get the low rate; consider saving them (up to five years) or pooling with your spouse.")}
           {M("studentLoanInterest", "Student loan interest (line 31900)", "Government student loans only, not a bank line of credit. Unused amounts carry five years.")}
-          {M("digitalNews", "Digital news subscriptions (line 31350)", "Qualifying Canadian journalism organisations, up to $500.")}
+          {getRules(ret.year).FEDERAL.digitalNewsMax > 0 && M("digitalNews", "Digital news subscriptions (line 31350)", `Qualifying Canadian journalism organisations, up to $${getRules(ret.year).FEDERAL.digitalNewsMax}. ${ret.year} is the last year of this credit.`)}
           {M("instalmentsPaid", "Tax paid by instalments (line 47600)", "Quarterly amounts you sent the CRA during the year.")}
           <label className="flex items-start gap-2 text-sm">
             <input type="checkbox" className="mt-1" checked={o.homeBuyer} onChange={(e) => set("homeBuyer", e.target.checked)} />
@@ -510,7 +513,155 @@ function OtherTab({ ret, patch }: { ret: TaxReturn; patch: (p: Partial<TaxReturn
   );
 }
 
-// ---------------- 4 · From last year ----------------
+
+// ---------------- 5 · Every field on the forms ----------------
+
+type FormValue = string | number | boolean;
+
+function FieldsTab({ ret, result, patch }: { ret: TaxReturn; result: Result; patch: (p: Partial<TaxReturn>) => void }) {
+  const [onlyMine, setOnlyMine] = useState(true);
+  const [q, setQ] = useState("");
+  const F = ret.form ?? {};
+  const setF = (k: string, v: FormValue | undefined) => {
+    const n = { ...F };
+    if (v === undefined || v === "" || (typeof v === "number" && v === 0)) delete n[k];
+    else n[k] = v;
+    patch({ form: n });
+  };
+  const setRentalF = (r: RentalProperty, k: string, v: FormValue | undefined) => {
+    const n = { ...(r.form ?? {}) };
+    if (v === undefined || v === "" || (typeof v === "number" && v === 0)) delete n[k];
+    else n[k] = v;
+    patch({ rentals: ret.rentals.map((x) => (x.id === r.id ? { ...x, form: n } : x)) });
+  };
+  const t1 = fieldsForYear(T1_FIELDS, ret.year);
+  const mb = ret.profile.province === "MB" ? MB428_FIELDS : [];
+  const all = [...t1, ...mb];
+  const lineValue = (f: FormFieldDef) => (f.line ? result.lines.find((l) => l.line === f.line && (f.form === "MB428" ? l.form === "428" : l.form !== "428" && l.form !== "Next year"))?.value : undefined);
+  const p = ret.profile;
+  const profileText: Record<string, string> = {
+    firstName: p.firstName, lastName: p.lastName, street: p.street, city: p.city, provMailing: p.province, postalCode: p.postalCode,
+    sin: p.sin ? "•••-•••-" + p.sin.replace(/\D/g, "").slice(-3) : "(not typed)", dateOfBirth: p.dateOfBirth, maritalStatus: p.maritalStatus, provResidence: p.province,
+    spouseFirstName: p.spouseFirstName, spouseSin: p.spouseSin ? "•••" : "", spouseNetIncome: money(p.spouseNetIncome),
+  };
+  const autoText = (f: FormFieldDef) => {
+    const v = lineValue(f);
+    if (v !== undefined) return money(v);
+    if (f.key in profileText) return profileText[f.key] || "—";
+    return "—";
+  };
+  const matches = (f: FormFieldDef) => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return true;
+    return `${f.line ?? ""} ${f.label} ${f.help} ${f.group}`.toLowerCase().includes(needle);
+  };
+  const shown = all.filter((f) => (onlyMine ? isManual(f) : true) && matches(f));
+  const groups: { name: string; fields: FormFieldDef[] }[] = [];
+  for (const f of shown) {
+    const g = groups.find((x) => x.name === f.group);
+    if (g) g.fields.push(f);
+    else groups.push({ name: f.group, fields: [f] });
+  }
+  const mine = all.filter(isManual);
+  const typed = mine.filter((f) => F[f.key] !== undefined && F[f.key] !== "" && F[f.key] !== 0).length;
+  const autoCount = all.length - mine.length;
+  return (
+    <>
+      <Card title={`Every field on the ${ret.year} T1${mb.length ? " and MB428" : ""}`}>
+        <p className="text-sm leading-relaxed">
+          The forms have more boxes than most people need. The app fills <strong>{autoCount}</strong> of them from the other pages; the remaining <strong>{mine.length}</strong> are yours to type if they apply — pensions, support payments, child care, caregiver amounts, foreign tax, refundable credits, the Elections Canada questions, your email and phone. Whatever you type here is carried into the totals and printed on the PDF; the app does not check it against a slip or schedule, and the return page marks those lines.
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <input className={`${inputCls} max-w-xs`} placeholder="Search a line number or word…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search fields" />
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} />
+            Show only the fields I can type
+          </label>
+          <Caption>
+            {typed} of {mine.length} typed
+          </Caption>
+        </div>
+      </Card>
+      {groups.map((g) => (
+        <Card key={g.name} title={g.name}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {g.fields.map((f) =>
+              f.auto ? (
+                <Field key={f.key} label={`${f.line ? f.line + " · " : ""}${f.label}`} help={f.help}>
+                  <div className="flex items-center justify-between rounded-md border border-dashed border-rule bg-paper px-2.5 py-1.5 text-sm">
+                    <span className={f.kind === "money" ? "font-mono" : ""}>{autoText(f)}</span>
+                    <span className="text-xs text-ink-soft">from {f.auto === "computed" ? "the calculation" : `the ${f.auto} page`}</span>
+                  </div>
+                </Field>
+              ) : (
+                <Field key={f.key} label={`${f.line ? f.line + " · " : ""}${f.label}`} help={f.help}>
+                  <FieldInput f={f} value={F[f.key]} onChange={(v) => setF(f.key, v)} />
+                </Field>
+              ),
+            )}
+          </div>
+        </Card>
+      ))}
+      {groups.length === 0 && <Caption>Nothing matches “{q}”.</Caption>}
+      {ret.rentals.map((r) => (
+        <Card key={r.id} title={`T776 — ${r.address.trim() || "rental property"} — identification and co-owners`}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {T776_FIELDS.filter(matches).map((f) => (
+              <Field key={f.key} label={f.label} help={f.help}>
+                <FieldInput f={f} value={r.form?.[f.key]} onChange={(v) => setRentalF(r, f.key, v)} />
+              </Field>
+            ))}
+          </div>
+        </Card>
+      ))}
+    </>
+  );
+}
+
+function FieldInput({ f, value, onChange }: { f: FormFieldDef; value: FormValue | undefined; onChange: (v: FormValue | undefined) => void }) {
+  switch (f.kind) {
+    case "money":
+      return <MoneyInput value={num(value as number)} onChange={(n) => onChange(n)} />;
+    case "count":
+      return <input className={`${inputCls} font-mono`} type="number" inputMode="numeric" step="1" min={0} value={num(value as number) || ""} placeholder="0" onChange={(e) => onChange(Math.max(0, Math.floor(Number(e.target.value) || 0)))} />;
+    case "percent":
+      return <input className={`${inputCls} font-mono`} type="number" inputMode="decimal" step="0.01" min={0} max={100} value={num(value as number) || ""} placeholder="%" onChange={(e) => onChange(Number(e.target.value) || 0)} />;
+    case "check":
+      return (
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={value === true} onChange={(e) => onChange(e.target.checked ? true : undefined)} /> Yes
+        </label>
+      );
+    case "yesno":
+      return (
+        <select className={inputCls} value={value === true ? "yes" : value === false ? "no" : ""} onChange={(e) => onChange(e.target.value === "yes" ? true : e.target.value === "no" ? false : undefined)}>
+          <option value="">— not answered —</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+      );
+    case "radio":
+    case "select":
+      return (
+        <select className={inputCls} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value || undefined)}>
+          <option value="">— blank —</option>
+          {(f.options ?? []).map((o) => (
+            <option key={o} value={o}>
+              {o}
+            </option>
+          ))}
+        </select>
+      );
+    case "date":
+      return <input className={inputCls} type="date" value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value || undefined)} />;
+    case "monthDay":
+      return <input className={`${inputCls} font-mono`} placeholder="MM-DD" maxLength={5} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value || undefined)} />;
+    default:
+      return <input className={inputCls} value={typeof value === "string" ? value : ""} onChange={(e) => onChange(e.target.value || undefined)} />;
+  }
+}
+
+// ---------------- 6 · From last year ----------------
 
 function CarryTab({ ret, patch }: { ret: TaxReturn; patch: (p: Partial<TaxReturn>) => void }) {
   const c = ret.carry;
