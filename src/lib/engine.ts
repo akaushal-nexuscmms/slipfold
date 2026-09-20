@@ -222,7 +222,11 @@ export function compute(ret: TaxReturn): Result {
   const cppBase = paidEnough ? requiredBase : round2(cppPaid.total * (CPP.baseRate / CPP.rate));
   const cppEnhanced = paidEnough ? requiredEnhanced : round2(cppPaid.total - cppBase);
   const cpp2Allowed = Math.min(cpp2Paid.total, CPP.cpp2Max);
-  const cppOver = round2(Math.max(0, cppPaid.total - CPP.maxContribution) + Math.max(0, cpp2Paid.total - CPP.cpp2Max));
+  // Overpayment (Schedule 8 Part 3 / line 44800): what was withheld minus what the year's pensionable earnings actually require —
+  // not only the excess over the annual maximum. Two employers each apply the $3,500 exemption per pay period differently, and a
+  // mid-year job change commonly over-withholds well below the maximum. (Months-based proration — turning 18 or 70, CPP disability — is not modelled.)
+  const cppRequired = round2(requiredBase + requiredEnhanced);
+  const cppOver = round2(Math.max(0, cppPaid.total - Math.min(cppRequired, CPP.maxContribution)) + Math.max(0, cpp2Paid.total - CPP.cpp2Max));
 
   // self-employment CPP
   let seSubject = 0;
@@ -277,7 +281,7 @@ export function compute(ret: TaxReturn): Result {
 
   if (cppBase) push({ line: "30800", form: "T1", label: "Base CPP contributions through employment", value: cppBase, section: "fedCredits", from: [...cppPaid.parts, `Base share = box 16 × 4.95/5.95`], explain: "The base part of your CPP (Schedule 8). The enhanced part was deducted on line 22215 instead." });
   if (seBaseHalf) push({ line: "31000", form: "T1", label: "Base CPP contributions on self-employment income", value: seBaseHalf, section: "fedCredits", from: [`${money(seSubject)} × 4.95%`], explain: "Employee half of the base CPP on business income (the other half was deducted on line 22200)." });
-  if (cppOver) warnings.push(`CPP overpayment of ${money(cppOver)} — you paid more than the annual maximum across employers. It is refunded on line 44800.`);
+  if (cppOver) warnings.push(`CPP overpayment of ${money(cppOver)} — your slips show more CPP withheld (${money(cppPaid.total)}) than your pensionable earnings require (${money(Math.min(cppRequired, CPP.maxContribution))}). It is refunded on line 44800.`);
 
   const eiPaid = sumBox(slips, "t4", "b18", "18");
   const eiAllowed = Math.min(eiPaid.total, EI.maxPremium);
@@ -393,7 +397,7 @@ export function compute(ret: TaxReturn): Result {
   // ---------------- refund / balance ----------------
   const withheld = round2(sumBox(slips, "t4", "b22", "22").total + sumBox(slips, "t4a", "b022", "022").total + sumBox(slips, "t4e", "b22", "22").total);
   push({ line: "43700", form: "T1", label: "Total income tax deducted", value: withheld, section: "refund", always: true, from: [...sumBox(slips, "t4", "b22", "22").parts, ...sumBox(slips, "t4a", "b022", "022").parts, ...sumBox(slips, "t4e", "b22", "22").parts], explain: "Every 'income tax deducted' box, added up. This is what you already paid." });
-  if (cppOver) push({ line: "44800", form: "T1", label: "CPP overpayment", value: cppOver, section: "refund", from: cppPaid.parts, explain: "Contributions above the annual maximum, refunded." });
+  if (cppOver) push({ line: "44800", form: "T1", label: "CPP overpayment", value: cppOver, section: "refund", from: [...cppPaid.parts, `Required on pensionable earnings of ${money(pensionable)}: (${money(pensionable)} − ${money(CPP.basicExemption)}) × ${pct(CPP.rate)} = ${money(cppRequired)}`], explain: "Schedule 8 compares what your employers withheld with what your pensionable earnings for the year require. Anything extra comes back here — it happens with two jobs, a mid-year job change, or pay that was uneven through the year, not only when you pass the annual maximum." });
   if (eiOver) push({ line: "45000", form: "T1", label: "Employment insurance overpayment", value: eiOver, section: "refund", from: eiPaid.parts, explain: "Premiums above the annual maximum, refunded." });
   if (o.instalmentsPaid) push({ line: "47600", form: "T1", label: "Tax paid by instalments", value: round2(o.instalmentsPaid), section: "refund", from: [`Entered ${money(o.instalmentsPaid)}`], explain: "Quarterly instalments you paid the CRA during the year." });
   for (const f of byRole("refundable")) pushManual(f, "refund");

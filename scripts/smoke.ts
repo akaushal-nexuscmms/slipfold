@@ -358,6 +358,17 @@ eq("rollForward: tuition carried", rollForward(stu).carry.tuitionFederal, 3289.2
   eq("fields: roll-forward keeps email, citizenship, language; drops the amounts", [next.form.email, next.form.citizen, next.form.language, next.form["11300"], next.form["mb.60800"]], ["sam@example.ca", true, "Français", undefined, undefined]);
 }
 
+// ---------- CPP overpayment below the annual maximum (Schedule 8) ----------
+// Found 2026-09-19 against a filed 2025 return: $130.13 on line 44800 with contributions far under the maximum.
+// Hand: earnings 40,000 → required (40,000 − 3,500) × 5.95% = 2,171.75; withheld 2,300 → overpayment 128.25;
+// credit base 36,500 × 4.95% = 1,806.75, enhanced deduction 36,500 × 1% = 365.
+{
+  const over = compute({ ...emptyReturn(2025), slips: [{ id: "o", kind: "t4", issuer: "Two pay systems Ltd.", values: { b14: 40000, b16: 2300, b18: 656, b22: 5000 } }] });
+  eq("cpp: overpayment is withheld minus required, not only above the annual maximum", [line(over, "44800"), line(over, "30800"), line(over, "22215")], [128.25, 1806.75, 365]);
+  eq("cpp: the overpayment is in total credits", line(over, "48200"), 5128.25);
+  eq("cpp: exact withholding gives no overpayment line", line(compute({ ...emptyReturn(2025), slips: [{ id: "o", kind: "t4", issuer: "x", values: { b14: 40000, b16: 2171.75 } }] }), "44800"), undefined);
+}
+
 // ---------- encryption at rest ----------
 {
   const { meta, key } = await createVault("correct horse battery staple");
